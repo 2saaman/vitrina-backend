@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 
-const db = require('./db');
+const { addListing, getAllListings } = require('./db');
 const { generateVideoFromImages } = require('./videoGenerator');
 const { generateCaption, generateHashtags } = require('./captionGenerator');
 const { startScheduler } = require('./scheduler');
@@ -47,10 +47,13 @@ app.post('/api/listings', checkAuth, upload.array('images', 10), async (req, res
     const caption = generateCaption(data);
     const hashtags = generateHashtags(data);
 
-    db.prepare(`
-      INSERT INTO listings (id, uyTuri, manzil, narx, xonalar, maydon, xususiyat, caption, hashtags, videoPath, status, scheduledFor)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'kutilmoqda', ?)
-    `).run(id, uyTuri, manzil, narx, xonalar, maydon, xususiyat, caption, JSON.stringify(hashtags), videoFileName, scheduledFor);
+    addListing({
+      id, uyTuri, manzil, narx, qavat, xonalar, maydon, xususiyat,
+      caption, hashtags, videoPath: videoFileName,
+      status: 'kutilmoqda', scheduledFor,
+      postedAt: null, igPostId: null,
+      createdAt: new Date().toISOString()
+    });
 
     res.json({ id, caption, hashtags, videoUrl: `${process.env.PUBLIC_BASE_URL}/videos/${videoFileName}`, scheduledFor, status: 'kutilmoqda' });
   } catch (err) {
@@ -61,8 +64,7 @@ app.post('/api/listings', checkAuth, upload.array('images', 10), async (req, res
 
 // Barcha e'lonlar tarixi
 app.get('/api/listings', checkAuth, (req, res) => {
-  const rows = db.prepare('SELECT * FROM listings ORDER BY createdAt DESC').all();
-  res.json(rows.map((r) => ({ ...r, hashtags: JSON.parse(r.hashtags || '[]') })));
+  res.json(getAllListings());
 });
 
 // Serverning ishlab turganini tekshirish
