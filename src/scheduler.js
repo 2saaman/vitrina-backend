@@ -1,19 +1,18 @@
 const cron = require('node-cron');
-const db = require('./db');
+const { getDueListings, updateListing } = require('./db');
 const { publishReel } = require('./instagramPublisher');
 
 function startScheduler() {
   // Har daqiqada tekshiradi
   cron.schedule('* * * * *', async () => {
     const now = new Date().toISOString();
-    const due = db.prepare(
-      `SELECT * FROM listings WHERE status = 'kutilmoqda' AND scheduledFor <= ?`
-    ).all(now);
+    const due = getDueListings(now);
 
     for (const listing of due) {
       try {
         const videoUrl = `${process.env.PUBLIC_BASE_URL}/videos/${listing.videoPath}`;
-        const fullCaption = `${listing.caption}\n\n${JSON.parse(listing.hashtags).join(' ')}`;
+        const hashtags = Array.isArray(listing.hashtags) ? listing.hashtags : JSON.parse(listing.hashtags || '[]');
+        const fullCaption = `${listing.caption}\n\n${hashtags.join(' ')}`;
 
         const igPostId = await publishReel({
           igUserId: process.env.IG_USER_ID,
@@ -22,13 +21,11 @@ function startScheduler() {
           caption: fullCaption
         });
 
-        db.prepare(
-          `UPDATE listings SET status = 'joylandi', postedAt = ?, igPostId = ? WHERE id = ?`
-        ).run(new Date().toISOString(), igPostId, listing.id);
+        updateListing(listing.id, { status: 'joylandi', postedAt: new Date().toISOString(), igPostId });
 
         console.log(`✅ Joylandi: ${listing.id} -> IG post ${igPostId}`);
       } catch (err) {
-        db.prepare(`UPDATE listings SET status = 'xato' WHERE id = ?`).run(listing.id);
+        updateListing(listing.id, { status: 'xato' });
         console.error(`❌ Xatolik (${listing.id}):`, err.message);
       }
     }
