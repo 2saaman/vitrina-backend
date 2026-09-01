@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -11,6 +12,7 @@ const { generateCaption, generateHashtags } = require('./captionGenerator');
 const { startScheduler } = require('./scheduler');
 
 const app = express();
+app.use(cors());
 app.use(express.json());
 app.use('/videos', express.static(path.join(__dirname, '..', 'public', 'videos')));
 
