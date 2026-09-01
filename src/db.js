@@ -1,26 +1,49 @@
-const Database = require('better-sqlite3');
+const fs = require('fs');
 const path = require('path');
 
-const db = new Database(path.join(__dirname, '..', 'data', 'vitrina.db'));
+const DATA_DIR = path.join(__dirname, '..', 'data');
+const DB_FILE = path.join(DATA_DIR, 'listings.json');
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS listings (
-    id TEXT PRIMARY KEY,
-    uyTuri TEXT,
-    manzil TEXT,
-    narx TEXT,
-    xonalar TEXT,
-    maydon TEXT,
-    xususiyat TEXT,
-    caption TEXT,
-    hashtags TEXT,
-    videoPath TEXT,
-    status TEXT DEFAULT 'kutilmoqda',
-    scheduledFor TEXT,
-    postedAt TEXT,
-    igPostId TEXT,
-    createdAt TEXT DEFAULT CURRENT_TIMESTAMP
-  );
-`);
+function ensureFile() {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  if (!fs.existsSync(DB_FILE)) fs.writeFileSync(DB_FILE, '[]', 'utf-8');
+}
 
-module.exports = db;
+function readAll() {
+  ensureFile();
+  try {
+    return JSON.parse(fs.readFileSync(DB_FILE, 'utf-8'));
+  } catch (e) {
+    return [];
+  }
+}
+
+function writeAll(listings) {
+  ensureFile();
+  fs.writeFileSync(DB_FILE, JSON.stringify(listings, null, 2), 'utf-8');
+}
+
+function addListing(listing) {
+  const listings = readAll();
+  listings.push(listing);
+  writeAll(listings);
+}
+
+function updateListing(id, updates) {
+  const listings = readAll();
+  const idx = listings.findIndex((l) => l.id === id);
+  if (idx !== -1) {
+    listings[idx] = { ...listings[idx], ...updates };
+    writeAll(listings);
+  }
+}
+
+function getAllListings() {
+  return readAll().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+}
+
+function getDueListings(nowISO) {
+  return readAll().filter((l) => l.status === 'kutilmoqda' && l.scheduledFor && l.scheduledFor <= nowISO);
+}
+
+module.exports = { addListing, updateListing, getAllListings, getDueListings, readAll };
