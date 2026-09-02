@@ -9,6 +9,7 @@ const { v4: uuidv4 } = require('uuid');
 const { addListing, getAllListings } = require('./db');
 const { generateVideoFromImages } = require('./videoGenerator');
 const { generateCaption, generateHashtags } = require('./captionGenerator');
+const { uploadVideo } = require('./cloudinary');
 const { startScheduler } = require('./scheduler');
 
 const app = express();
@@ -46,19 +47,25 @@ app.post('/api/listings', checkAuth, upload.array('images', 10), async (req, res
     // Vaqtinchalik yuklangan rasmlarni tozalash
     imagePaths.forEach((p) => fs.unlink(p, () => {}));
 
+    // Videoni Cloudinary'ga yuklash (turg'un havola olish uchun)
+    const videoUrl = await uploadVideo(videoOutputPath, id);
+
+    // Lokal video faylni endi kerak emas, o'chiramiz
+    fs.unlink(videoOutputPath, () => {});
+
     const data = { uyTuri, manzil, narx, qavat, xonalar, maydon, xususiyat };
     const caption = generateCaption(data);
     const hashtags = generateHashtags(data);
 
     addListing({
       id, uyTuri, manzil, narx, qavat, xonalar, maydon, xususiyat,
-      caption, hashtags, videoPath: videoFileName,
+      caption, hashtags, videoUrl,
       status: 'kutilmoqda', scheduledFor,
       postedAt: null, igPostId: null,
       createdAt: new Date().toISOString()
     });
 
-    res.json({ id, caption, hashtags, videoUrl: `${process.env.PUBLIC_BASE_URL}/videos/${videoFileName}`, scheduledFor, status: 'kutilmoqda' });
+    res.json({ id, caption, hashtags, videoUrl, scheduledFor, status: 'kutilmoqda' });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
