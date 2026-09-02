@@ -1,80 +1,96 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
-const { v4: uuidv4 } = require('uuid');
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<title>Vitrina — Server sinovi</title>
+<style>
+  body { font-family: -apple-system, sans-serif; max-width: 640px; margin: 30px auto; padding: 0 20px; background: #16233A; color: #EDE6D6; }
+  h1 { font-size: 22px; }
+  label { display: block; margin: 14px 0 5px; font-size: 13px; color: #B9C2D0; }
+  input, textarea { width: 100%; padding: 9px; border-radius: 4px; border: 1px solid #3d4d6b; background: #1e2f4d; color: white; box-sizing: border-box; }
+  button { margin-top: 20px; width: 100%; padding: 12px; background: #B5533C; color: white; border: none; border-radius: 4px; font-size: 15px; cursor: pointer; }
+  button:disabled { background: #5B6B7A; }
+  #result { margin-top: 20px; padding: 14px; background: #1e2f4d; border-radius: 4px; white-space: pre-wrap; font-size: 13px; word-break: break-all; }
+  a { color: #9fd; }
+</style>
+</head>
+<body>
+  <h1>🏡 Vitrina — Server sinovi</h1>
+  <p style="color:#B9C2D0; font-size:14px;">Bu sahifa to'g'ridan-to'g'ri serveringizda ishlaydi. Instagram tokeni bo'lmagani uchun hozircha faqat video yasalgani tekshiriladi.</p>
 
-const { addListing, getAllListings } = require('./db');
-const { generateVideoFromImages } = require('./videoGenerator');
-const { generateCaption, generateHashtags } = require('./captionGenerator');
-const { startScheduler } = require('./scheduler');
+  <label>Admin Secret (Render'da qo'ygan maxfiy so'zingiz)</label>
+  <input id="adminSecret" placeholder="MaxfiySoz2026">
 
-const app = express();
-app.use(cors());
-app.use(express.json());
-app.use(express.static(path.join(__dirname, '..', 'public')));
-app.use('/videos', express.static(path.join(__dirname, '..', 'public', 'videos')));
+  <label>Rasmlar (2-3 tasi yetarli)</label>
+  <input type="file" id="images" accept="image/*" multiple>
 
-const upload = multer({ dest: path.join(__dirname, '..', 'public', 'uploads') });
+  <label>Uy turi</label>
+  <input id="uyTuri" value="Hovli uy">
 
-// Oddiy himoya: har bir so'rov ADMIN_SECRET bilan kelishi kerak
-function checkAuth(req, res, next) {
-  const secret = req.headers['x-admin-secret'];
-  if (secret !== process.env.ADMIN_SECRET) {
-    return res.status(401).json({ error: "Ruxsat yo'q" });
-  }
-  next();
-}
+  <label>Manzil</label>
+  <input id="manzil" value="Yunusobod tumani">
 
-// Yangi e'lon qo'shish: rasmlar + ma'lumot + qachon joylanishi
-app.post('/api/listings', checkAuth, upload.array('images', 10), async (req, res) => {
+  <label>Narxi</label>
+  <input id="narx" value="$255000">
+
+  <label>Xonalar</label>
+  <input id="xonalar" value="6">
+
+  <label>Maydon (m²)</label>
+  <input id="maydon" value="240">
+
+  <label>Xususiyatlari</label>
+  <textarea id="xususiyat">Yaxshi mahallada, yevroremont, yashil hudud</textarea>
+
+  <button id="sendBtn">Yuborish va sinash</button>
+
+  <div id="result" style="display:none;"></div>
+
+<script>
+document.getElementById('sendBtn').onclick = async () => {
+  const btn = document.getElementById('sendBtn');
+  const result = document.getElementById('result');
+  const baseUrl = window.location.origin;
+  const adminSecret = document.getElementById('adminSecret').value.trim();
+  const images = document.getElementById('images').files;
+
+  if (!adminSecret) { alert('Admin Secret kiriting!'); return; }
+  if (images.length === 0) { alert('Kamida bitta rasm tanlang!'); return; }
+
+  const formData = new FormData();
+  for (const file of images) formData.append('images', file);
+  formData.append('uyTuri', document.getElementById('uyTuri').value);
+  formData.append('manzil', document.getElementById('manzil').value);
+  formData.append('narx', document.getElementById('narx').value);
+  formData.append('xonalar', document.getElementById('xonalar').value);
+  formData.append('maydon', document.getElementById('maydon').value);
+  formData.append('xususiyat', document.getElementById('xususiyat').value);
+  formData.append('scheduledFor', new Date(Date.now() + 86400000).toISOString());
+
+  btn.disabled = true;
+  btn.textContent = 'Video yasalmoqda... (1-2 daqiqa kutishingiz mumkin)';
+  result.style.display = 'block';
+  result.textContent = 'Yuborilmoqda...';
+
   try {
-    const { uyTuri, manzil, narx, qavat, xonalar, maydon, xususiyat, scheduledFor } = req.body;
-    if (!req.files || req.files.length === 0) {
-      return res.status(400).json({ error: 'Kamida bitta rasm kerak' });
-    }
-
-    const id = uuidv4();
-    const imagePaths = req.files.map((f) => f.path);
-    const videoFileName = `${id}.mp4`;
-    const videoOutputPath = path.join(__dirname, '..', 'public', 'videos', videoFileName);
-
-    await generateVideoFromImages(imagePaths, videoOutputPath);
-
-    // Vaqtinchalik yuklangan rasmlarni tozalash
-    imagePaths.forEach((p) => fs.unlink(p, () => {}));
-
-    const data = { uyTuri, manzil, narx, qavat, xonalar, maydon, xususiyat };
-    const caption = generateCaption(data);
-    const hashtags = generateHashtags(data);
-
-    addListing({
-      id, uyTuri, manzil, narx, qavat, xonalar, maydon, xususiyat,
-      caption, hashtags, videoPath: videoFileName,
-      status: 'kutilmoqda', scheduledFor,
-      postedAt: null, igPostId: null,
-      createdAt: new Date().toISOString()
+    const res = await fetch(`${baseUrl}/api/listings`, {
+      method: 'POST',
+      headers: { 'x-admin-secret': adminSecret },
+      body: formData
     });
-
-    res.json({ id, caption, hashtags, videoUrl: `${process.env.PUBLIC_BASE_URL}/videos/${videoFileName}`, scheduledFor, status: 'kutilmoqda' });
+    const data = await res.json();
+    if (res.ok) {
+      result.innerHTML = '✅ MUVAFFAQIYATLI!\n\n' + JSON.stringify(data, null, 2) + '\n\nVideoni ko\'rish: <a href="' + data.videoUrl + '" target="_blank">' + data.videoUrl + '</a>';
+    } else {
+      result.textContent = '❌ XATOLIK:\n\n' + JSON.stringify(data, null, 2);
+    }
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
+    result.textContent = '❌ Ulanishda xatolik: ' + err.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Yuborish va sinash';
   }
-});
-
-// Barcha e'lonlar tarixi
-app.get('/api/listings', checkAuth, (req, res) => {
-  res.json(getAllListings());
-});
-
-// Serverning ishlab turganini tekshirish
-app.get('/health', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Vitrina backend ${PORT}-portda ishga tushdi`);
-  startScheduler();
-});
+};
+</script>
+</body>
+</html>
