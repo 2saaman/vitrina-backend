@@ -3,10 +3,10 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-const SECONDS_PER_IMAGE = 3;
-const FPS = 25;
-const WIDTH = 1080;
-const HEIGHT = 1350; // Instagram uchun qulay 4:5 nisbat
+const SECONDS_PER_IMAGE = 2.5;
+const FPS = 18;
+const WIDTH = 720;
+const HEIGHT = 900; // Instagram uchun qulay 4:5 nisbat, lekin bepul server uchun yengillashtirilgan
 
 /**
  * Bir nechta rasmdan pan/zoom (Ken Burns) effektli video yasaydi.
@@ -20,17 +20,16 @@ function generateVideoFromImages(imagePaths, outputPath) {
       return reject(new Error('Kamida bitta rasm kerak'));
     }
 
-    const frames = SECONDS_PER_IMAGE * FPS;
+    const frames = Math.round(SECONDS_PER_IMAGE * FPS);
     const inputs = [];
     const filterParts = [];
 
     imagePaths.forEach((imgPath, i) => {
       inputs.push('-loop', '1', '-t', String(SECONDS_PER_IMAGE), '-i', imgPath);
-      // Har bir rasmga sekin zoom effekti + o'lchamga moslash
-      const zoomDirection = i % 2 === 0 ? 'zoom+0.0012' : '1.15-0.0012*on';
+      const zoomDirection = i % 2 === 0 ? 'zoom+0.0015' : '1.12-0.0015*on';
       filterParts.push(
-        `[${i}:v]scale=${WIDTH * 1.3}:${HEIGHT * 1.3}:force_original_aspect_ratio=increase,` +
-        `crop=${WIDTH * 1.3}:${HEIGHT * 1.3},` +
+        `[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,` +
+        `crop=${WIDTH}:${HEIGHT},` +
         `zoompan=z='${zoomDirection}':d=${frames}:s=${WIDTH}x${HEIGHT}:fps=${FPS},` +
         `format=yuv420p[v${i}]`
       );
@@ -45,6 +44,8 @@ function generateVideoFromImages(imagePaths, outputPath) {
       '-map', '[outv]',
       '-r', String(FPS),
       '-pix_fmt', 'yuv420p',
+      '-preset', 'ultrafast',
+      '-threads', '1',
       '-movflags', '+faststart',
       '-y',
       outputPath
