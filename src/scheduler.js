@@ -10,7 +10,7 @@ function startScheduler() {
 
     for (const listing of due) {
       try {
-        const videoUrl = `${process.env.PUBLIC_BASE_URL}/videos/${listing.videoPath}`;
+        const videoUrl = listing.videoUrl;
         const hashtags = Array.isArray(listing.hashtags) ? listing.hashtags : JSON.parse(listing.hashtags || '[]');
         const fullCaption = `${listing.caption}\n\n${hashtags.join(' ')}`;
 
