@@ -25,12 +25,13 @@ function generateVideoFromImages(imagePaths, outputPath) {
     const filterParts = [];
 
     imagePaths.forEach((imgPath, i) => {
-      inputs.push('-loop', '1', '-t', String(SECONDS_PER_IMAGE), '-i', imgPath);
+      inputs.push('-loop', '1', '-i', imgPath);
       const zoomDirection = i % 2 === 0 ? 'zoom+0.0015' : '1.12-0.0015*on';
       filterParts.push(
         `[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,` +
         `crop=${WIDTH}:${HEIGHT},` +
         `zoompan=z='${zoomDirection}':d=${frames}:s=${WIDTH}x${HEIGHT}:fps=${FPS},` +
+        `trim=duration=${SECONDS_PER_IMAGE},` +
         `format=yuv420p[v${i}]`
       );
     });
