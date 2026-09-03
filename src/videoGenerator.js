@@ -6,15 +6,16 @@ const fs = require('fs');
 const SECONDS_PER_IMAGE = 2.5;
 const FPS = 18;
 const WIDTH = 720;
-const HEIGHT = 900; // Instagram uchun qulay 4:5 nisbat, lekin bepul server uchun yengillashtirilgan
+const HEIGHT = 900;
 
 /**
- * Bir nechta rasmdan pan/zoom (Ken Burns) effektli video yasaydi.
+ * Bir nechta rasmdan pan/zoom (Ken Burns) effektli video yasaydi va musiqa qo'shadi.
  * @param {string[]} imagePaths - lokal rasm fayllari yo'llari
  * @param {string} outputPath - chiqish video fayli (.mp4)
+ * @param {string} [musicPath] - musiqa fayli yo'li (ixtiyoriy)
  * @returns {Promise<string>} outputPath
  */
-function generateVideoFromImages(imagePaths, outputPath) {
+function generateVideoFromImages(imagePaths, outputPath, musicPath) {
   return new Promise((resolve, reject) => {
     if (!imagePaths || imagePaths.length === 0) {
       return reject(new Error('Kamida bitta rasm kerak'));
@@ -39,10 +40,25 @@ function generateVideoFromImages(imagePaths, outputPath) {
     const concatInputs = imagePaths.map((_, i) => `[v${i}]`).join('');
     const filterComplex = filterParts.join(';') + `;${concatInputs}concat=n=${imagePaths.length}:v=1:a=0[outv]`;
 
+    // Musiqa fayli mavjud bo'lsa, uni oxirgi input qilib qo'shamiz
+    const audioInputIndex = imagePaths.length; // musiqa input indeksi (rasmlardan keyin)
+    if (musicPath && fs.existsSync(musicPath)) {
+      inputs.push('-i', musicPath);
+    }
+
     const args = [
       ...inputs,
       '-filter_complex', filterComplex,
       '-map', '[outv]',
+    ];
+
+    if (musicPath && fs.existsSync(musicPath)) {
+      args.push('-map', `${audioInputIndex}:a`);
+      args.push('-shortest'); // video/audio dan qisqasiga moslashtiradi
+      args.push('-c:a', 'aac', '-b:a', '128k');
+    }
+
+    args.push(
       '-r', String(FPS),
       '-pix_fmt', 'yuv420p',
       '-preset', 'ultrafast',
@@ -50,7 +66,7 @@ function generateVideoFromImages(imagePaths, outputPath) {
       '-movflags', '+faststart',
       '-y',
       outputPath
-    ];
+    );
 
     const proc = spawn(ffmpegPath, args);
     let stderr = '';
