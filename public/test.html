@@ -21,7 +21,7 @@
   <label>Admin Secret (Render'da qo'ygan maxfiy so'zingiz)</label>
   <input id="adminSecret" placeholder="MaxfiySoz2026">
 
-  <label>Rasmlar (2-3 tasi yetarli)</label>
+  <label>Rasmlar (bepul serverda maksimal 5 ta)</label>
   <input type="file" id="images" accept="image/*" multiple>
 
   <label>Uy turi</label>
@@ -56,6 +56,7 @@ document.getElementById('sendBtn').onclick = async () => {
 
   if (!adminSecret) { alert('Admin Secret kiriting!'); return; }
   if (images.length === 0) { alert('Kamida bitta rasm tanlang!'); return; }
+  if (images.length > 5) { alert("Ko'pi bilan 5 ta rasm tanlang (bepul server chegarasi)!"); return; }
 
   const formData = new FormData();
   for (const file of images) formData.append('images', file);
