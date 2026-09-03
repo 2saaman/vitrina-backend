@@ -19,6 +19,7 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 app.use('/videos', express.static(path.join(__dirname, '..', 'public', 'videos')));
 
 const upload = multer({ dest: path.join(__dirname, '..', 'public', 'uploads') });
+const MAX_IMAGES = 5;
 
 // Oddiy himoya: har bir so'rov ADMIN_SECRET bilan kelishi kerak
 function checkAuth(req, res, next) {
@@ -30,7 +31,7 @@ function checkAuth(req, res, next) {
 }
 
 // Yangi e'lon qo'shish: rasmlar + ma'lumot + qachon joylanishi
-app.post('/api/listings', checkAuth, upload.array('images', 10), async (req, res) => {
+app.post('/api/listings', checkAuth, upload.array('images', MAX_IMAGES), async (req, res) => {
   try {
     const { uyTuri, manzil, narx, qavat, xonalar, maydon, xususiyat, scheduledFor } = req.body;
     if (!req.files || req.files.length === 0) {
@@ -79,6 +80,15 @@ app.get('/api/listings', checkAuth, (req, res) => {
 
 // Serverning ishlab turganini tekshirish
 app.get('/health', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
+
+// Multer va boshqa xatoliklarni chiroyli JSON ko'rinishida qaytarish
+app.use((err, req, res, next) => {
+  if (err && err.code === 'LIMIT_UNEXPECTED_FILE') {
+    return res.status(400).json({ error: `Ko'pi bilan ${MAX_IMAGES} ta rasm yuklash mumkin` });
+  }
+  console.error(err);
+  res.status(500).json({ error: err.message || 'Kutilmagan xatolik' });
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
