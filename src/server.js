@@ -20,6 +20,27 @@ app.use('/videos', express.static(path.join(__dirname, '..', 'public', 'videos')
 
 const upload = multer({ dest: path.join(__dirname, '..', 'public', 'uploads') });
 const MAX_IMAGES = 5;
+const MUSIC_DIR = path.join(__dirname, '..', 'public', 'music');
+
+// public/music papkasidan tasodifiy musiqa tanlaydi (fayllar bo'lmasa, musiqasiz davom etadi)
+function pickRandomMusic() {
+  try {
+    console.log('🎵 Musiqa papkasi tekshirilmoqda:', MUSIC_DIR);
+    if (!fs.existsSync(MUSIC_DIR)) {
+      console.log('🎵 Musiqa papkasi topilmadi!');
+      return null;
+    }
+    const files = fs.readdirSync(MUSIC_DIR).filter((f) => f.toLowerCase().endsWith('.mp3'));
+    console.log('🎵 Topilgan mp3 fayllar:', files);
+    if (files.length === 0) return null;
+    const chosen = files[Math.floor(Math.random() * files.length)];
+    console.log('🎵 Tanlangan musiqa:', chosen);
+    return path.join(MUSIC_DIR, chosen);
+  } catch (e) {
+    console.log('🎵 Musiqa tanlashda xatolik:', e.message);
+    return null;
+  }
+}
 
 // Oddiy himoya: har bir so'rov ADMIN_SECRET bilan kelishi kerak
 function checkAuth(req, res, next) {
@@ -43,7 +64,8 @@ app.post('/api/listings', checkAuth, upload.array('images', MAX_IMAGES), async (
     const videoFileName = `${id}.mp4`;
     const videoOutputPath = path.join(__dirname, '..', 'public', 'videos', videoFileName);
 
-    await generateVideoFromImages(imagePaths, videoOutputPath);
+    const musicPath = pickRandomMusic();
+    await generateVideoFromImages(imagePaths, videoOutputPath, musicPath);
 
     // Vaqtinchalik yuklangan rasmlarni tozalash
     imagePaths.forEach((p) => fs.unlink(p, () => {}));
