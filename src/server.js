@@ -11,6 +11,7 @@ const { generateVideoFromImages } = require('./videoGenerator');
 const { generateCaption, generateHashtags } = require('./captionGenerator');
 const { uploadVideo } = require('./cloudinary');
 const { startScheduler } = require('./scheduler');
+const { optimizePostTime } = require('./postTimeOptimizer');
 
 const app = express();
 app.use(cors());
@@ -80,15 +81,33 @@ app.post('/api/listings', checkAuth, upload.array('images', MAX_IMAGES), async (
     const caption = generateCaption(data);
     const hashtags = generateHashtags(data);
 
+    // Joylash vaqtini optimallashtirish: agar foydalanuvchi vaqti "yomon" oynaga
+    // tushsa, avtomatik eng yaqin optimal vaqtga ko'chiriladi.
+    let finalScheduledFor = scheduledFor;
+    if (scheduledFor) {
+      try {
+        const { optimizedTime, wasAdjusted, originalTime } = optimizePostTime(scheduledFor);
+        finalScheduledFor = optimizedTime.toISOString();
+        if (wasAdjusted) {
+          console.log(`⏰ Vaqt optimallashtirildi: ${originalTime.toISOString()} → ${finalScheduledFor}`);
+        } else {
+          console.log(`⏰ Vaqt allaqachon optimal: ${finalScheduledFor}`);
+        }
+      } catch (e) {
+        console.log('⏰ Vaqtni optimallashtirishda xatolik, asl vaqt ishlatiladi:', e.message);
+        finalScheduledFor = scheduledFor;
+      }
+    }
+
     addListing({
       id, uyTuri, manzil, narx, qavat, xonalar, maydon, xususiyat,
       caption, hashtags, videoUrl,
-      status: 'kutilmoqda', scheduledFor,
+      status: 'kutilmoqda', scheduledFor: finalScheduledFor,
       postedAt: null, igPostId: null,
       createdAt: new Date().toISOString()
     });
 
-    res.json({ id, caption, hashtags, videoUrl, scheduledFor, status: 'kutilmoqda' });
+    res.json({ id, caption, hashtags, videoUrl, scheduledFor: finalScheduledFor, status: 'kutilmoqda' });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
