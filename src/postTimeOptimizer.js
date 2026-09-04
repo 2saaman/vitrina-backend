@@ -1,48 +1,63 @@
 // postTimeOptimizer.js
 // Instagram'da e'lonni eng samarali vaqtda joylash uchun yordamchi modul.
-// Hozircha 2026-yilgi umumiy tadqiqotlarga asoslangan statik jadval ishlatiladi.
-// Kelajakda (postlar to'plangach) bu Instagram Insights API orqali shaxsiy
-// ma'lumotlar bilan almashtiriladi.
+// MUHIM: server UTC vaqtida ishlashi mumkin, shuning uchun barcha hisob-kitoblar
+// aniq Toshkent vaqtiga (UTC+5, yil davomida o'zgarmaydi) asoslanadi —
+// serverning o'z mahalliy vaqtidan mustaqil ishlaydi.
 
-// Har bir hafta kuni uchun "yaxshi" soatlar oralig'i (24 soatlik format, mahalliy vaqt)
+const TASHKENT_OFFSET_HOURS = 5;
+const OFFSET_MS = TASHKENT_OFFSET_HOURS * 60 * 60 * 1000;
+
+// Har bir hafta kuni uchun "yaxshi" soatlar oralig'i (Toshkent mahalliy vaqti)
 // 0 = Yakshanba, 1 = Dushanba, ... 6 = Shanba
 const OPTIMAL_WINDOWS = {
-  0: [[12, 15]],           // Yakshanba: kun ichi
-  1: [[12, 14], [18, 21]], // Dushanba: tushlik + kechqurun
-  2: [[12, 14], [18, 21]], // Seshanba
-  3: [[12, 14], [18, 21]], // Chorshanba (eng kuchli kun)
-  4: [[9, 10], [12, 14], [18, 21]], // Payshanba
-  5: [[12, 14], [16, 18]], // Juma (dam olish oldidan)
-  6: [[11, 13], [17, 19]], // Shanba
+  0: [[12, 15]],
+  1: [[12, 14], [18, 21]],
+  2: [[12, 14], [18, 21]],
+  3: [[12, 14], [18, 21]],
+  4: [[9, 10], [12, 14], [18, 21]],
+  5: [[12, 14], [16, 18]],
+  6: [[11, 13], [17, 19]],
 };
 
-// Berilgan vaqt "yaxshi oynaga" tushadimi, tekshiradi
+// Berilgan Date'dan Toshkent mahalliy soat/kun/sanasini xavfsiz oladi
+// (serverning o'z vaqt zonasiga bog'liq bo'lmagan holda)
+function getTashkentParts(date) {
+  const shifted = new Date(date.getTime() + OFFSET_MS);
+  return {
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth(),
+    day: shifted.getUTCDate(),
+    weekday: shifted.getUTCDay(),
+    hour: shifted.getUTCHours() + shifted.getUTCMinutes() / 60,
+  };
+}
+
+// Toshkent mahalliy sana/soatidan haqiqiy UTC Date yaratadi
+function buildDateFromTashkent(year, month, day, hour) {
+  const h = Math.floor(hour);
+  const m = Math.round((hour - h) * 60);
+  const utcMs = Date.UTC(year, month, day, h, m, 0, 0) - OFFSET_MS;
+  return new Date(utcMs);
+}
+
 function isInOptimalWindow(date) {
-  const day = date.getDay();
-  const hour = date.getHours() + date.getMinutes() / 60;
-  const windows = OPTIMAL_WINDOWS[day] || [];
+  const { weekday, hour } = getTashkentParts(date);
+  const windows = OPTIMAL_WINDOWS[weekday] || [];
   return windows.some(([start, end]) => hour >= start && hour < end);
 }
 
-// Berilgan kun uchun eng yaqin optimal vaqtni topadi
 function findNearestOptimalTime(date) {
-  const day = date.getDay();
-  const hour = date.getHours() + date.getMinutes() / 60;
-  const windows = OPTIMAL_WINDOWS[day] || [];
+  const { year, month, day, weekday, hour } = getTashkentParts(date);
+  const windows = OPTIMAL_WINDOWS[weekday] || [];
 
   if (windows.length === 0) {
-    // Agar shu kun uchun oyna aniqlanmagan bo'lsa, standart 13:00 ni qaytaramiz
-    const fallback = new Date(date);
-    fallback.setHours(13, 0, 0, 0);
-    return fallback;
+    return buildDateFromTashkent(year, month, day, 13);
   }
 
-  // Eng yaqin oynani topamiz (vaqt farqi bo'yicha)
   let closestStart = null;
   let minDiff = Infinity;
 
   windows.forEach(([start, end]) => {
-    // Agar so'ralgan vaqt oyna ichida bo'lsa, o'zgartirish shart emas
     if (hour >= start && hour < end) {
       closestStart = hour;
       minDiff = 0;
@@ -55,15 +70,11 @@ function findNearestOptimalTime(date) {
     }
   });
 
-  const result = new Date(date);
-  const h = Math.floor(closestStart);
-  const m = Math.round((closestStart - h) * 60);
-  result.setHours(h, m, 0, 0);
-  return result;
+  return buildDateFromTashkent(year, month, day, closestStart);
 }
 
 /**
- * Asosiy funksiya: foydalanuvchi kiritgan vaqtni tekshiradi,
+ * Asosiy funksiya: foydalanuvchi kiritgan vaqtni Toshkent vaqti bo'yicha tekshiradi,
  * agar u "yomon" oynaga tushsa — eng yaqin optimal vaqtga ko'chiradi.
  * @param {string|Date} requestedTime - foydalanuvchi kiritgan scheduledFor
  * @returns {{ optimizedTime: Date, wasAdjusted: boolean, originalTime: Date }}
