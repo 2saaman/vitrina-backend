@@ -66,7 +66,7 @@ app.post('/api/listings', checkAuth, upload.array('images', MAX_IMAGES), async (
     const videoOutputPath = path.join(__dirname, '..', 'public', 'videos', videoFileName);
 
     const musicPath = pickRandomMusic();
-    await generateVideoFromImages(imagePaths, videoOutputPath, musicPath);
+   await generateVideoFromImages(imagePaths, videoOutputPath, musicPath, { manzil, narx, xonalar });
 
     // Vaqtinchalik yuklangan rasmlarni tozalash
     imagePaths.forEach((p) => fs.unlink(p, () => {}));
