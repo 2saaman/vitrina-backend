@@ -1,3 +1,4 @@
+// captionGenerator.js
 const OPENERS = [
   "Diqqat! Ajoyib taklif 🏡",
   "Yangi e'lon — bu imkoniyatni qo'ldan boy bermang! ✨",
@@ -12,9 +13,42 @@ const CTAS = [
   "Savollaringiz bo'lsa, xabar qoldiring, tez orada javob beramiz 💬"
 ];
 
-const BASE_HASHTAGS = ["#kochmasmulk", "#uysotuv", "#toshkent", "#uyijara", "#mulk", "#realestate", "#uy", "#kvartira"];
+// Katta auditoriyali (mashhur) — har doim qo'shiladi, lekin ko'pi bilan 2-3 tasi
+const HASHTAGS_BROAD = [
+  "#kochmasmulk", "#realestate", "#uy", "#toshkent", "#uzbekistan"
+];
+
+// O'rta auditoriyali — mulk turiga bog'liq
+const HASHTAGS_MEDIUM = {
+  "kvartira": ["#kvartirasotiladi", "#kvartira", "#kvartiratoshkent"],
+  "hovli uy": ["#hovliuy", "#uysotiladi", "#hovliuytoshkent"],
+  "ofis": ["#ofissotiladi", "#tijoratkochmasmulk", "#ofistoshkent"],
+  "default": ["#uysotuv", "#mulk", "#uyijara"]
+};
+
+// Tor auditoriyali — hudud va narx toifasiga bog'liq, eng aniq auditoriyani topadi
+function buildNicheHashtags(data) {
+  const tags = [];
+  if (data.manzil) {
+    const first = data.manzil.split(',')[0].trim().toLowerCase().replace(/\s+/g, '');
+    if (first) {
+      tags.push('#' + first);
+      tags.push('#' + first + 'kochmasmulk');
+    }
+  }
+  if (data.xonalar) {
+    tags.push(`#${data.xonalar}xonaliuy`);
+  }
+  return tags;
+}
 
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+// Massivdan tasodifiy N ta elementni (takrorlanmas) tanlaydi
+function pickN(arr, n) {
+  const shuffled = [...arr].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, n);
+}
 
 function buildFeatureLine(data) {
   const parts = [];
@@ -31,7 +65,6 @@ function generateCaption(data) {
   const featureLine = buildFeatureLine(data);
   const manzilLine = data.manzil ? `📍 ${data.manzil}` : '';
   const xususiyatLine = data.xususiyat ? `\n${data.xususiyat}` : '';
-
   const caption = [
     opener,
     '',
@@ -42,21 +75,26 @@ function generateCaption(data) {
     '',
     cta
   ].filter(Boolean).join('\n');
-
   return caption;
 }
 
+/**
+ * Hashtaglarni 3 qatlamli strategiya bilan yasaydi:
+ * - Keng qamrovli (broad): ko'p ko'rish, lekin yuqori raqobat
+ * - O'rta (medium): mulk turiga mos, o'rtacha raqobat
+ * - Tor (niche): hudud/xususiyatga xos, kam raqobat lekin aniq auditoriya
+ * Bu aralashma Instagram algoritmida turli auditoriya segmentlariga chiqish imkonini beradi.
+ */
 function generateHashtags(data) {
-  const tags = new Set(BASE_HASHTAGS);
-  if (data.uyTuri) {
-    const t = data.uyTuri.toLowerCase().replace(/\s+/g, '');
-    tags.add('#' + t);
-  }
-  if (data.manzil) {
-    const first = data.manzil.split(',')[0].trim().toLowerCase().replace(/\s+/g, '');
-    if (first) tags.add('#' + first);
-  }
-  return Array.from(tags).slice(0, 12);
+  const uyTuriKey = (data.uyTuri || '').toLowerCase();
+  const mediumPool = HASHTAGS_MEDIUM[uyTuriKey] || HASHTAGS_MEDIUM.default;
+
+  const broad = pickN(HASHTAGS_BROAD, 3);        // 3 ta keng qamrovli
+  const medium = pickN(mediumPool, 2);             // 2 ta o'rta
+  const niche = buildNicheHashtags(data).slice(0, 4); // 4 tagacha tor
+
+  const all = [...new Set([...broad, ...medium, ...niche])];
+  return all.slice(0, 12); // Instagram tavsiyasi: 10-15 ta orasida optimal
 }
 
 module.exports = { generateCaption, generateHashtags };
