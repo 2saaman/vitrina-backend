@@ -1,7 +1,9 @@
 const axios = require('axios');
 
-const GRAPH_VERSION = 'v20.0';
-const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
+// Instagram Login orqali olingan token faqat graph.instagram.com bilan ishlaydi
+// (graph.facebook.com bilan emas — bu Facebook Login oqimi uchun)
+const GRAPH_VERSION = 'v21.0';
+const GRAPH_BASE = `https://graph.instagram.com/${GRAPH_VERSION}`;
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
