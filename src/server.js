@@ -6,12 +6,13 @@ const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 
-const { addListing, getAllListings } = require('./db');
+const { addListing, getAllListings, updateListing } = require('./db');
 const { generateVideoFromImages } = require('./videoGenerator');
 const { generateCaption, generateHashtags } = require('./captionGenerator');
 const { uploadVideo } = require('./cloudinary');
 const { startScheduler } = require('./scheduler');
 const { optimizePostTime } = require('./postTimeOptimizer');
+const { publishReel } = require('./instagramPublisher');
 
 const app = express();
 app.use(cors());
@@ -53,6 +54,12 @@ function checkAuth(req, res, next) {
 }
 
 // Yangi e'lon qo'shish: rasmlar + ma'lumot + qachon joylanishi
+//
+// IKKI XIL REJIM:
+//   1) scheduledFor BERILGAN  -> e'lon "kutilmoqda" holatida saqlanadi,
+//      scheduler (har daqiqada tekshiradi) belgilangan vaqt kelganda joylaydi.
+//   2) scheduledFor BERILMAGAN (bo'sh) -> video tayyor bo'lgach, DARHOL
+//      Instagram'ga joylanadi, scheduler'ni kutish shart emas.
 app.post('/api/listings', checkAuth, upload.array('images', MAX_IMAGES), async (req, res) => {
   try {
     const { uyTuri, manzil, narx, qavat, xonalar, maydon, xususiyat, scheduledFor } = req.body;
@@ -66,7 +73,7 @@ app.post('/api/listings', checkAuth, upload.array('images', MAX_IMAGES), async (
     const videoOutputPath = path.join(__dirname, '..', 'public', 'videos', videoFileName);
 
     const musicPath = pickRandomMusic();
-   await generateVideoFromImages(imagePaths, videoOutputPath, musicPath, { manzil, narx, xonalar });
+    await generateVideoFromImages(imagePaths, videoOutputPath, musicPath, { manzil, narx, xonalar });
 
     // Vaqtinchalik yuklangan rasmlarni tozalash
     imagePaths.forEach((p) => fs.unlink(p, () => {}));
@@ -80,23 +87,66 @@ app.post('/api/listings', checkAuth, upload.array('images', MAX_IMAGES), async (
     const data = { uyTuri, manzil, narx, qavat, xonalar, maydon, xususiyat };
     const caption = generateCaption(data);
     const hashtags = generateHashtags(data);
+    const fullCaption = `${caption}\n\n${hashtags.join(' ')}`;
 
-    // Joylash vaqtini optimallashtirish: agar foydalanuvchi vaqti "yomon" oynaga
-    // tushsa, avtomatik eng yaqin optimal vaqtga ko'chiriladi.
-    let finalScheduledFor = scheduledFor;
-    if (scheduledFor) {
+    const hasScheduledTime = scheduledFor && String(scheduledFor).trim() !== '';
+
+    // ============================================================
+    // 1-REJIM: DARHOL JOYLASH — scheduledFor berilmagan
+    // ============================================================
+    if (!hasScheduledTime) {
+      console.log('⚡ scheduledFor berilmagan — video darhol Instagram\'ga joylanmoqda...');
+
+      addListing({
+        id, uyTuri, manzil, narx, qavat, xonalar, maydon, xususiyat,
+        caption, hashtags, videoUrl,
+        status: 'joylanmoqda', scheduledFor: null,
+        postedAt: null, igPostId: null,
+        createdAt: new Date().toISOString()
+      });
+
       try {
-        const { optimizedTime, wasAdjusted, originalTime } = optimizePostTime(scheduledFor);
-        finalScheduledFor = optimizedTime.toISOString();
-        if (wasAdjusted) {
-          console.log(`⏰ Vaqt optimallashtirildi: ${originalTime.toISOString()} → ${finalScheduledFor}`);
-        } else {
-          console.log(`⏰ Vaqt allaqachon optimal: ${finalScheduledFor}`);
-        }
-      } catch (e) {
-        console.log('⏰ Vaqtni optimallashtirishda xatolik, asl vaqt ishlatiladi:', e.message);
-        finalScheduledFor = scheduledFor;
+        const igPostId = await publishReel({
+          igUserId: process.env.IG_USER_ID,
+          accessToken: process.env.IG_ACCESS_TOKEN,
+          videoUrl,
+          caption: fullCaption
+        });
+
+        updateListing(id, { status: 'joylandi', postedAt: new Date().toISOString(), igPostId });
+        console.log(`✅ Darhol joylandi: ${id} -> IG post ${igPostId}`);
+
+        return res.json({
+          id, caption, hashtags, videoUrl,
+          status: 'joylandi', igPostId,
+          message: '✅ Video darhol Instagram\'ga joylandi!'
+        });
+      } catch (publishErr) {
+        updateListing(id, { status: 'xato' });
+        console.error(`❌ Darhol joylashda xatolik (${id}):`, publishErr.message);
+        return res.status(500).json({
+          id, caption, hashtags, videoUrl,
+          status: 'xato',
+          error: `Joylashda xatolik: ${publishErr.message}`
+        });
       }
+    }
+
+    // ============================================================
+    // 2-REJIM: REJALASHTIRILGAN JOYLASH — scheduledFor berilgan
+    // ============================================================
+    let finalScheduledFor = scheduledFor;
+    try {
+      const { optimizedTime, wasAdjusted, originalTime } = optimizePostTime(scheduledFor);
+      finalScheduledFor = optimizedTime.toISOString();
+      if (wasAdjusted) {
+        console.log(`⏰ Vaqt optimallashtirildi: ${originalTime.toISOString()} → ${finalScheduledFor}`);
+      } else {
+        console.log(`⏰ Vaqt allaqachon optimal: ${finalScheduledFor}`);
+      }
+    } catch (e) {
+      console.log('⏰ Vaqtni optimallashtirishda xatolik, asl vaqt ishlatiladi:', e.message);
+      finalScheduledFor = scheduledFor;
     }
 
     addListing({
