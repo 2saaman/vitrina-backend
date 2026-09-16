@@ -6,8 +6,8 @@ const fs = require('fs');
 
 const SECONDS_PER_IMAGE = 3;
 const FPS = 18;
-const WIDTH = 720;
-const HEIGHT = 1280;
+const WIDTH = 576;
+const HEIGHT = 1024;
 const TRANSITION_DURATION = 0.5;
 const INTRO_DURATION = 1.5;
 const OUTRO_DURATION = 2;
