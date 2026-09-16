@@ -4,7 +4,7 @@ const { spawn, spawnSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-const SECONDS_PER_IMAGE = 3;
+const SECONDS_PER_IMAGE = 3.5;
 const FPS = 12;
 const WIDTH = 576;
 const HEIGHT = 1024;
