@@ -3,12 +3,24 @@
 // MUHIM: server UTC vaqtida ishlashi mumkin, shuning uchun barcha hisob-kitoblar
 // aniq Toshkent vaqtiga (UTC+5, yil davomida o'zgarmaydi) asoslanadi —
 // serverning o'z mahalliy vaqtidan mustaqil ishlaydi.
+//
+// IKKI DARAJALI TIZIM:
+//   1) Agar Instagram'dan haqiqiy obunachi faolligi ma'lumoti mavjud bo'lsa
+//      (instagramInsights.js orqali, kamida 100 obunachi bo'lganda) — shu
+//      real ma'lumot ishlatiladi.
+//   2) Aks holda (hali yetarli obunachi yo'q) — tadqiqotlarga asoslangan
+//      standart oynalar (quyida OPTIMAL_WINDOWS) ishlatiladi.
+// Vaqt o'tishi bilan akkaunt o'sgach, tizim avtomatik ravishda 1-darajaga
+// o'tadi — kodda hech narsa qo'lda o'zgartirish shart emas.
+
+const { getBestTashkentHours } = require('./instagramInsights');
 
 const TASHKENT_OFFSET_HOURS = 5;
 const OFFSET_MS = TASHKENT_OFFSET_HOURS * 60 * 60 * 1000;
 
 // Har bir hafta kuni uchun "yaxshi" soatlar oralig'i (Toshkent mahalliy vaqti)
-// 0 = Yakshanba, 1 = Dushanba, ... 6 = Shanba
+// — bu FALLBACK (zaxira) qiymat, faqat real ma'lumot hali mavjud bo'lmaganda
+// ishlatiladi. 0 = Yakshanba, 1 = Dushanba, ... 6 = Shanba
 const OPTIMAL_WINDOWS = {
   0: [[12, 15]],
   1: [[12, 14], [18, 21]],
@@ -40,15 +52,28 @@ function buildDateFromTashkent(year, month, day, hour) {
   return new Date(utcMs);
 }
 
+// Shu kun uchun ishlatiladigan oynalarni tanlaydi: avval real ma'lumotni
+// tekshiradi, bo'lmasa standart (fallback) oynalarga qaytadi.
+function getEffectiveWindows(weekday) {
+  const bestHours = getBestTashkentHours(4);
+  if (bestHours && bestHours.length > 0) {
+    // Har bir eng faol soatni 1 soatlik oynaga aylantiramiz (masalan 19 -> [19, 20])
+    return bestHours
+      .map((h) => [h, h + 1 > 23 ? 24 : h + 1])
+      .sort((a, b) => a[0] - b[0]);
+  }
+  return OPTIMAL_WINDOWS[weekday] || [];
+}
+
 function isInOptimalWindow(date) {
   const { weekday, hour } = getTashkentParts(date);
-  const windows = OPTIMAL_WINDOWS[weekday] || [];
+  const windows = getEffectiveWindows(weekday);
   return windows.some(([start, end]) => hour >= start && hour < end);
 }
 
 function findNearestOptimalTime(date) {
   const { year, month, day, weekday, hour } = getTashkentParts(date);
-  const windows = OPTIMAL_WINDOWS[weekday] || [];
+  const windows = getEffectiveWindows(weekday);
 
   if (windows.length === 0) {
     return buildDateFromTashkent(year, month, day, 13);
