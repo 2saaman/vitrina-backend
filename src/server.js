@@ -13,6 +13,7 @@ const { uploadVideo } = require('./cloudinary');
 const { startScheduler } = require('./scheduler');
 const { optimizePostTime } = require('./postTimeOptimizer');
 const { publishReel } = require('./instagramPublisher');
+const { getInsightsStatus, fetchOnlineFollowers } = require('./instagramInsights');
 
 const app = express();
 app.use(cors());
@@ -171,6 +172,22 @@ app.get('/api/listings', checkAuth, (req, res) => {
 
 // Serverning ishlab turganini tekshirish
 app.get('/health', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
+
+// Optimal vaqt tizimi qaysi rejimda ishlayotganini tekshirish:
+// haqiqiy Instagram ma'lumotidan foydalanyaptimi, yoki hali standart
+// (tadqiqotga asoslangan) oynalarni ishlatyaptimi.
+app.get('/api/insights-status', checkAuth, (req, res) => {
+  res.json(getInsightsStatus());
+});
+
+// Insights ma'lumotini qo'lda (darhol) yangilash — 6 soat kutmasdan tekshirish uchun
+app.post('/api/insights-refresh', checkAuth, async (req, res) => {
+  const values = await fetchOnlineFollowers({
+    igUserId: process.env.IG_USER_ID,
+    accessToken: process.env.IG_ACCESS_TOKEN
+  });
+  res.json({ updated: !!values, status: getInsightsStatus() });
+});
 
 // Multer va boshqa xatoliklarni chiroyli JSON ko'rinishida qaytarish
 app.use((err, req, res, next) => {
