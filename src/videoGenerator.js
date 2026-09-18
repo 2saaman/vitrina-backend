@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 
 const SECONDS_PER_IMAGE = 3;
-const FPS = 12;
+const FPS = 24;
 const WIDTH = 576;
 const HEIGHT = 1024;
 const TRANSITION_DURATION = 0.5;
@@ -28,6 +28,28 @@ function isDrawtextSupported() {
   return _drawtextSupported;
 }
 
+let _subtitlesSupported = null;
+function isSubtitlesSupported() {
+  if (_subtitlesSupported !== null) return _subtitlesSupported;
+  try {
+    const res = spawnSync(ffmpegPath, ['-hide_banner', '-filters']);
+    const output = (res.stdout || '').toString();
+    _subtitlesSupported = output.includes('subtitles');
+    console.log('🎤 subtitles filteri (karaoke uchun) mavjud:', _subtitlesSupported);
+  } catch (e) {
+    _subtitlesSupported = false;
+  }
+  return _subtitlesSupported;
+}
+
+// Har bir e'lon uchun necha soniyalik slayd-shou (rasmlar) davomiyligi
+// bo'lishini hisoblaydi — karaoke subtitr vaqtini shu bilan moslashtirish uchun.
+function computeSlideshowDuration(imageCount) {
+  if (imageCount <= 0) return 0;
+  if (imageCount === 1) return SECONDS_PER_IMAGE;
+  return SECONDS_PER_IMAGE + (imageCount - 1) * (SECONDS_PER_IMAGE - TRANSITION_DURATION);
+}
+
 function escapeDrawtext(text) {
   return String(text)
     .replace(/\\/g, '\\\\\\\\')
@@ -36,15 +58,29 @@ function escapeDrawtext(text) {
     .replace(/%/g, '\\%');
 }
 
-function generateVideoFromImages(imagePaths, outputPath, musicPath, overlayData) {
+/**
+ * @param {string[]} imagePaths
+ * @param {string} outputPath
+ * @param {{ musicPath?: string, voicePath?: string }} audioOptions - fon
+ *   musiqasi va/yoki ovozli tavsif fayllari (ikkalasi ham ixtiyoriy).
+ * @param {object} overlayData
+ * @param {string} [captionsAssPath] - karaoke uslubidagi .ass subtitr fayl
+ *   yo'li (ixtiyoriy). Mavjud bo'lsa, slayd-shou qismiga "kuydiriladi".
+ */
+function generateVideoFromImages(imagePaths, outputPath, audioOptions, overlayData, captionsAssPath) {
   return new Promise((resolve, reject) => {
     if (!imagePaths || imagePaths.length === 0) {
       return reject(new Error('Kamida bitta rasm kerak'));
     }
 
+    const musicPath = audioOptions?.musicPath;
+    const voicePath = audioOptions?.voicePath;
+    const hasMusic = musicPath && fs.existsSync(musicPath);
+    const hasVoice = voicePath && fs.existsSync(voicePath);
+
     const useText = isDrawtextSupported();
     if (!useText) {
-      console.log('🎬 drawtext mavjud emas — matn/intro/outro o\'tkazib yuboriladi, faqat crossfade + musiqa ishlatiladi.');
+      console.log('🎬 drawtext mavjud emas — matn/intro/outro o\'tkazib yuboriladi, faqat crossfade + audio ishlatiladi.');
     }
 
     const frames = Math.round(SECONDS_PER_IMAGE * FPS);
@@ -125,6 +161,19 @@ function generateVideoFromImages(imagePaths, outputPath, musicPath, overlayData)
       }
     }
 
+    // ============================================================
+    // KARAOKE SUBTITR: so'z-so'z yorishib boradigan matn (ixtiyoriy).
+    // Bu drawtext'dan MUSTAQIL ishlaydi (libass orqali), shuning uchun
+    // drawtext mavjud bo'lmasa ham (useText=false) ishlashi mumkin.
+    // ============================================================
+    if (captionsAssPath && fs.existsSync(captionsAssPath) && isSubtitlesSupported()) {
+      const escapedPath = captionsAssPath.replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'");
+      filterParts.push(`[${mainLabel}]subtitles=filename='${escapedPath}'[capped]`);
+      mainLabel = 'capped';
+    } else if (captionsAssPath) {
+      console.log('🎤 subtitles filtri mavjud emas yoki fayl topilmadi — karaoke subtitr o\'tkazib yuboriladi.');
+    }
+
     let outputLabel;
     if (useText) {
       filterParts.push(`[introv][${mainLabel}][outrov]concat=n=3:v=1:a=0[outv]`);
@@ -134,12 +183,41 @@ function generateVideoFromImages(imagePaths, outputPath, musicPath, overlayData)
       outputLabel = 'outv';
     }
 
-    const filterComplex = filterParts.join(';');
+    // ============================================================
+    // AUDIO: fon musiqasi va ovozli tavsifni (ikkalasi ham ixtiyoriy)
+    // birlashtiramiz. apad orqali ikkalasi ham video uzunligidan
+    // KAMIDA uzun bo'lishi ta'minlanadi, keyin -shortest orqali aynan
+    // video uzunligiga qadar qirqiladi — bu video hech qachon audio
+    // sababli qisqarib qolmasligini kafolatlaydi.
+    // ============================================================
+    let musicIdx = null;
+    let voiceIdx = null;
+    let nextInputIdx = imageStartIdx + imagePaths.length;
 
-    const audioInputIndex = imageStartIdx + imagePaths.length;
-    if (musicPath && fs.existsSync(musicPath)) {
+    if (hasMusic) {
       inputs.push('-i', musicPath);
+      musicIdx = nextInputIdx++;
     }
+    if (hasVoice) {
+      inputs.push('-i', voicePath);
+      voiceIdx = nextInputIdx++;
+    }
+
+    let audioOutputLabel = null;
+    if (hasMusic && hasVoice) {
+      filterParts.push(`[${musicIdx}:a]volume=0.35,apad=pad_dur=30[bgpad]`);
+      filterParts.push(`[${voiceIdx}:a]volume=1.4,apad=pad_dur=30[vopad]`);
+      filterParts.push(`[bgpad][vopad]amix=inputs=2:duration=longest:dropout_transition=2[aout]`);
+      audioOutputLabel = 'aout';
+    } else if (hasMusic) {
+      filterParts.push(`[${musicIdx}:a]apad=pad_dur=30[aout]`);
+      audioOutputLabel = 'aout';
+    } else if (hasVoice) {
+      filterParts.push(`[${voiceIdx}:a]volume=1.4,apad=pad_dur=30[aout]`);
+      audioOutputLabel = 'aout';
+    }
+
+    const filterComplex = filterParts.join(';');
 
     const args = [
       ...inputs,
@@ -147,8 +225,8 @@ function generateVideoFromImages(imagePaths, outputPath, musicPath, overlayData)
       '-map', `[${outputLabel}]`,
     ];
 
-    if (musicPath && fs.existsSync(musicPath)) {
-      args.push('-map', `${audioInputIndex}:a`);
+    if (audioOutputLabel) {
+      args.push('-map', `[${audioOutputLabel}]`);
       args.push('-shortest');
       args.push('-c:a', 'aac', '-b:a', '128k');
     }
@@ -176,4 +254,4 @@ function generateVideoFromImages(imagePaths, outputPath, musicPath, overlayData)
   });
 }
 
-module.exports = { generateVideoFromImages };
+module.exports = { generateVideoFromImages, computeSlideshowDuration, WIDTH, HEIGHT };
