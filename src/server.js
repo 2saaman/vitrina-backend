@@ -7,7 +7,15 @@ const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 
 const { addListing, getAllListings, updateListing } = require('./db');
-const { generateVideoFromImages } = require('./videoGenerator');
+const { generateVideoFromImages, computeSlideshowDuration, WIDTH, HEIGHT } = require('./videoGenerator');
+const { generateNarrationScript } = require('./narrationGenerator');
+const { synthesizeSpeech } = require('./ttsGenerator');
+const { generateKaraokeSubtitles } = require('./captionsGenerator');
+
+// Karaoke subtitr yoqilgan/o'chirilganligi — buni Render Environment'da
+// ENABLE_KARAOKE_CAPTIONS=false qilib qo'ysangiz, kodni o'zgartirmasdan
+// darhol o'chirib qo'yish mumkin (yoqmasa, shunchaki shu qiymatni o'zgartiring).
+const ENABLE_KARAOKE_CAPTIONS = process.env.ENABLE_KARAOKE_CAPTIONS !== 'false';
 const { generateCaption, generateHashtags } = require('./captionGenerator');
 const { uploadVideo } = require('./cloudinary');
 const { startScheduler } = require('./scheduler');
@@ -74,10 +82,45 @@ app.post('/api/listings', checkAuth, upload.array('images', MAX_IMAGES), async (
     const videoOutputPath = path.join(__dirname, '..', 'public', 'videos', videoFileName);
 
     const musicPath = pickRandomMusic();
-    await generateVideoFromImages(imagePaths, videoOutputPath, musicPath, { manzil, narx, xonalar });
 
-    // Vaqtinchalik yuklangan rasmlarni tozalash
+    // Ovozli tavsif (AI narration) yaratish — xatolik bo'lsa ham dastur
+    // to'xtamaydi, shunchaki ovozsiz (faqat musiqali) video yaratiladi.
+    const narrationScript = generateNarrationScript({ uyTuri, manzil, narx, xonalar, maydon });
+    const voiceOutputPath = path.join(__dirname, '..', 'public', 'uploads', `${id}-voice.ogg`);
+    let voicePath = null;
+    try {
+      voicePath = await synthesizeSpeech(narrationScript, voiceOutputPath);
+    } catch (e) {
+      console.log('🔊 Ovozli tavsif yaratishda kutilmagan xatolik:', e.message);
+    }
+
+    // Karaoke subtitr (.ass fayl) — ENABLE_KARAOKE_CAPTIONS orqali yoqib/
+    // o'chirish mumkin. Bu vizual effekt bo'lgani uchun ovoz mavjud
+    // bo'lmasa ham ishlaydi (taxminiy vaqt taqsimoti bilan).
+    let captionsAssPath = null;
+    if (ENABLE_KARAOKE_CAPTIONS) {
+      const slideshowDuration = computeSlideshowDuration(imagePaths.length);
+      captionsAssPath = path.join(__dirname, '..', 'public', 'uploads', `${id}-captions.ass`);
+      try {
+        generateKaraokeSubtitles(narrationScript, slideshowDuration, captionsAssPath, WIDTH, HEIGHT);
+      } catch (e) {
+        console.log('🎤 Karaoke subtitr yaratishda xatolik, o\'tkazib yuboriladi:', e.message);
+        captionsAssPath = null;
+      }
+    }
+
+    await generateVideoFromImages(
+      imagePaths,
+      videoOutputPath,
+      { musicPath, voicePath },
+      { manzil, narx, xonalar },
+      captionsAssPath
+    );
+
+    // Vaqtinchalik yuklangan rasmlar, ovoz va subtitr fayllarini tozalash
     imagePaths.forEach((p) => fs.unlink(p, () => {}));
+    if (voicePath) fs.unlink(voicePath, () => {});
+    if (captionsAssPath) fs.unlink(captionsAssPath, () => {});
 
     // Videoni Cloudinary'ga yuklash (turg'un havola olish uchun)
     const videoUrl = await uploadVideo(videoOutputPath, id);
