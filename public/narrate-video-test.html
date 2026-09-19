@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<title>Videoga ovoz + subtitr qo'shish</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 480px; margin: 40px auto; padding: 0 16px; }
+  label { display: block; margin-top: 12px; font-weight: 600; font-size: 14px; }
+  input, textarea { width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box; font-size: 14px; }
+  button { margin-top: 20px; width: 100%; padding: 12px; background: #2563eb; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; }
+  button:disabled { background: #93c5fd; cursor: not-allowed; }
+  #result { margin-top: 20px; white-space: pre-wrap; background: #f3f4f6; padding: 12px; border-radius: 6px; font-size: 13px; word-break: break-all; }
+  .ok { color: #15803d; }
+  .err { color: #b91c1c; }
+  a.dl { display: inline-block; margin-top: 8px; color: #2563eb; font-weight: 600; }
+</style>
+</head>
+<body>
+  <h2>🎙️ Videoga ovoz + subtitr qo'shish</h2>
+  <p>Tayyor videoni yuboring, ssenariy matnini yozing — AI ovoz va jozibali subtitr qo'shib beradi.</p>
+
+  <form id="form">
+    <label>Admin Secret</label>
+    <input type="password" id="adminSecret" required placeholder="ADMIN_SECRET">
+
+    <label>Video fayl</label>
+    <input type="file" id="video" accept="video/*" required>
+
+    <label>Ssenariy matni (ovoz shu matnni o'qiydi)</label>
+    <textarea id="script" rows="5" required placeholder="Masalan: Bugun sizga ajoyib yangilik bor..."></textarea>
+
+    <label><input type="checkbox" id="addMusic" style="width:auto;display:inline"> Fon musiqasi ham qo'shilsin</label>
+
+    <button type="submit" id="submitBtn">Yaratish</button>
+  </form>
+
+  <div id="result"></div>
+
+<script>
+document.getElementById('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('submitBtn');
+  const result = document.getElementById('result');
+  btn.disabled = true;
+  btn.textContent = 'Ishlanmoqda... (biroz vaqt olishi mumkin)';
+  result.textContent = '';
+  result.className = '';
+
+  try {
+    const fd = new FormData();
+    fd.append('video', document.getElementById('video').files[0]);
+    fd.append('script', document.getElementById('script').value);
+    fd.append('addMusic', document.getElementById('addMusic').checked ? 'true' : 'false');
+
+    const res = await fetch('https://vitrina-backend-6o1f.onrender.com/api/narrate-video', {
+      method: 'POST',
+      headers: { 'x-admin-secret': document.getElementById('adminSecret').value },
+      body: fd
+    });
+
+    const data = await res.json();
+    result.className = res.ok ? 'ok' : 'err';
+    let html = (res.ok ? '✅ NATIJA:\n' : '❌ XATOLIK:\n') + JSON.stringify(data, null, 2);
+    result.textContent = html;
+    if (res.ok && data.videoUrl) {
+      const a = document.createElement('a');
+      a.href = data.videoUrl;
+      a.target = '_blank';
+      a.className = 'dl';
+      a.textContent = '▶️ Videoni ochish / yuklab olish';
+      result.appendChild(document.createElement('br'));
+      result.appendChild(a);
+    }
+  } catch (err) {
+    result.className = 'err';
+    result.textContent = '❌ So\'rov xatoligi: ' + err.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Yaratish';
+  }
+});
+</script>
+</body>
+</html>
