@@ -11,6 +11,7 @@ const { generateVideoFromImages, computeSlideshowDuration, WIDTH, HEIGHT } = req
 const { generateNarrationScript } = require('./narrationGenerator');
 const { synthesizeSpeech } = require('./ttsGenerator');
 const { generateKaraokeSubtitles } = require('./captionsGenerator');
+const { narrateExistingVideo } = require('./videoNarrator');
 
 // Karaoke subtitr yoqilgan/o'chirilganligi — buni Render Environment'da
 // ENABLE_KARAOKE_CAPTIONS=false qilib qo'ysangiz, kodni o'zgartirmasdan
@@ -33,7 +34,6 @@ const upload = multer({ dest: path.join(__dirname, '..', 'public', 'uploads') })
 const MAX_IMAGES = 5;
 const MUSIC_DIR = path.join(__dirname, '..', 'public', 'music');
 
-// public/music papkasidan tasodifiy musiqa tanlaydi (fayllar bo'lmasa, musiqasiz davom etadi)
 function pickRandomMusic() {
   try {
     console.log('🎵 Musiqa papkasi tekshirilmoqda:', MUSIC_DIR);
@@ -53,7 +53,6 @@ function pickRandomMusic() {
   }
 }
 
-// Oddiy himoya: har bir so'rov ADMIN_SECRET bilan kelishi kerak
 function checkAuth(req, res, next) {
   const secret = req.headers['x-admin-secret'];
   if (secret !== process.env.ADMIN_SECRET) {
@@ -62,13 +61,6 @@ function checkAuth(req, res, next) {
   next();
 }
 
-// Yangi e'lon qo'shish: rasmlar + ma'lumot + qachon joylanishi
-//
-// IKKI XIL REJIM:
-//   1) scheduledFor BERILGAN  -> e'lon "kutilmoqda" holatida saqlanadi,
-//      scheduler (har daqiqada tekshiradi) belgilangan vaqt kelganda joylaydi.
-//   2) scheduledFor BERILMAGAN (bo'sh) -> video tayyor bo'lgach, DARHOL
-//      Instagram'ga joylanadi, scheduler'ni kutish shart emas.
 app.post('/api/listings', checkAuth, upload.array('images', MAX_IMAGES), async (req, res) => {
   try {
     const { uyTuri, manzil, narx, qavat, xonalar, maydon, xususiyat, scheduledFor } = req.body;
@@ -83,8 +75,6 @@ app.post('/api/listings', checkAuth, upload.array('images', MAX_IMAGES), async (
 
     const musicPath = pickRandomMusic();
 
-    // Ovozli tavsif (AI narration) yaratish — xatolik bo'lsa ham dastur
-    // to'xtamaydi, shunchaki ovozsiz (faqat musiqali) video yaratiladi.
     const narrationScript = generateNarrationScript({ uyTuri, manzil, narx, xonalar, maydon });
     const voiceOutputPath = path.join(__dirname, '..', 'public', 'uploads', `${id}-voice.ogg`);
     let voicePath = null;
@@ -94,9 +84,6 @@ app.post('/api/listings', checkAuth, upload.array('images', MAX_IMAGES), async (
       console.log('🔊 Ovozli tavsif yaratishda kutilmagan xatolik:', e.message);
     }
 
-    // Karaoke subtitr (.ass fayl) — ENABLE_KARAOKE_CAPTIONS orqali yoqib/
-    // o'chirish mumkin. Bu vizual effekt bo'lgani uchun ovoz mavjud
-    // bo'lmasa ham ishlaydi (taxminiy vaqt taqsimoti bilan).
     let captionsAssPath = null;
     if (ENABLE_KARAOKE_CAPTIONS) {
       const slideshowDuration = computeSlideshowDuration(imagePaths.length);
@@ -117,15 +104,11 @@ app.post('/api/listings', checkAuth, upload.array('images', MAX_IMAGES), async (
       captionsAssPath
     );
 
-    // Vaqtinchalik yuklangan rasmlar, ovoz va subtitr fayllarini tozalash
     imagePaths.forEach((p) => fs.unlink(p, () => {}));
     if (voicePath) fs.unlink(voicePath, () => {});
     if (captionsAssPath) fs.unlink(captionsAssPath, () => {});
 
-    // Videoni Cloudinary'ga yuklash (turg'un havola olish uchun)
     const videoUrl = await uploadVideo(videoOutputPath, id);
-
-    // Lokal video faylni endi kerak emas, o'chiramiz
     fs.unlink(videoOutputPath, () => {});
 
     const data = { uyTuri, manzil, narx, qavat, xonalar, maydon, xususiyat };
@@ -135,9 +118,6 @@ app.post('/api/listings', checkAuth, upload.array('images', MAX_IMAGES), async (
 
     const hasScheduledTime = scheduledFor && String(scheduledFor).trim() !== '';
 
-    // ============================================================
-    // 1-REJIM: DARHOL JOYLASH — scheduledFor berilmagan
-    // ============================================================
     if (!hasScheduledTime) {
       console.log('⚡ scheduledFor berilmagan — video darhol Instagram\'ga joylanmoqda...');
 
@@ -176,9 +156,6 @@ app.post('/api/listings', checkAuth, upload.array('images', MAX_IMAGES), async (
       }
     }
 
-    // ============================================================
-    // 2-REJIM: REJALASHTIRILGAN JOYLASH — scheduledFor berilgan
-    // ============================================================
     let finalScheduledFor = scheduledFor;
     try {
       const { optimizedTime, wasAdjusted, originalTime } = optimizePostTime(scheduledFor);
@@ -208,41 +185,79 @@ app.post('/api/listings', checkAuth, upload.array('images', MAX_IMAGES), async (
   }
 });
 
-// Barcha e'lonlar tarixi
 app.get('/api/listings', checkAuth, (req, res) => {
   res.json(getAllListings());
 });
 
-// Serverning ishlab turganini tekshirish
+app.post('/api/narrate-video', checkAuth, upload.single('video'), async (req, res) => {
+  const cleanupPaths = [];
+  try {
+    const { script, addMusic } = req.body;
+    if (!req.file) {
+      return res.status(400).json({ error: 'Video fayl kerak' });
+    }
+    if (!script || !script.trim()) {
+      return res.status(400).json({ error: 'Ssenariy matni (script) kerak' });
+    }
+
+    const id = uuidv4();
+    const inputVideoPath = req.file.path;
+    cleanupPaths.push(inputVideoPath);
+
+    const voiceOutputPath = path.join(__dirname, '..', 'public', 'uploads', `${id}-nv-voice.ogg`);
+    let voicePath = null;
+    try {
+      voicePath = await synthesizeSpeech(script, voiceOutputPath);
+      if (voicePath) cleanupPaths.push(voicePath);
+    } catch (e) {
+      console.log('🔊 Ovoz yaratishda xatolik:', e.message);
+    }
+
+    const musicPath = addMusic === 'true' ? pickRandomMusic() : null;
+
+    const { getVideoInfo } = require('./videoNarrator');
+    const info = getVideoInfo(inputVideoPath);
+    const videoDuration = info.duration || 15;
+    const videoWidth = info.width || WIDTH;
+    const videoHeight = info.height || HEIGHT;
+
+    let captionsAssPath = null;
+    if (ENABLE_KARAOKE_CAPTIONS) {
+      captionsAssPath = path.join(__dirname, '..', 'public', 'uploads', `${id}-nv-captions.ass`);
+      try {
+        generateKaraokeSubtitles(script, videoDuration, captionsAssPath, videoWidth, videoHeight);
+        cleanupPaths.push(captionsAssPath);
+      } catch (e) {
+        console.log('🎤 Subtitr yaratishda xatolik:', e.message);
+        captionsAssPath = null;
+      }
+    }
+
+    const finalOutputPath = path.join(__dirname, '..', 'public', 'videos', `${id}-narrated.mp4`);
+    await narrateExistingVideo({
+      inputVideoPath,
+      outputPath: finalOutputPath,
+      voicePath,
+      musicPath,
+      captionsAssPath
+    });
+
+    const videoUrl = await uploadVideo(finalOutputPath, id);
+    fs.unlink(finalOutputPath, () => {});
+    cleanupPaths.forEach((p) => fs.unlink(p, () => {}));
+
+    res.json({ videoUrl, message: '✅ Video tayyor — yuklab oling va kerakli joyga joylashtiring.' });
+  } catch (err) {
+    cleanupPaths.forEach((p) => fs.unlink(p, () => {}));
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/health', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
 
-// Optimal vaqt tizimi qaysi rejimda ishlayotganini tekshirish:
-// haqiqiy Instagram ma'lumotidan foydalanyaptimi, yoki hali standart
-// (tadqiqotga asoslangan) oynalarni ishlatyaptimi.
 app.get('/api/insights-status', checkAuth, (req, res) => {
   res.json(getInsightsStatus());
 });
 
-// Insights ma'lumotini qo'lda (darhol) yangilash — 6 soat kutmasdan tekshirish uchun
 app.post('/api/insights-refresh', checkAuth, async (req, res) => {
-  const values = await fetchOnlineFollowers({
-    igUserId: process.env.IG_USER_ID,
-    accessToken: process.env.IG_ACCESS_TOKEN
-  });
-  res.json({ updated: !!values, status: getInsightsStatus() });
-});
-
-// Multer va boshqa xatoliklarni chiroyli JSON ko'rinishida qaytarish
-app.use((err, req, res, next) => {
-  if (err && err.code === 'LIMIT_UNEXPECTED_FILE') {
-    return res.status(400).json({ error: `Ko'pi bilan ${MAX_IMAGES} ta rasm yuklash mumkin` });
-  }
-  console.error(err);
-  res.status(500).json({ error: err.message || 'Kutilmagan xatolik' });
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Vitrina backend ${PORT}-portda ishga tushdi`);
-  startScheduler();
-});
