@@ -221,7 +221,7 @@ app.get('/api/listings', checkAuth, (req, res) => {
 app.post('/api/narrate-video', checkAuth, upload.single('video'), async (req, res) => {
   const cleanupPaths = [];
   try {
-    const { script, addMusic } = req.body;
+    const { script, addMusic, skipCaptions } = req.body;
     if (!req.file) {
       return res.status(400).json({ error: 'Video fayl kerak' });
     }
@@ -252,7 +252,7 @@ app.post('/api/narrate-video', checkAuth, upload.single('video'), async (req, re
     const videoHeight = info.height || HEIGHT;
 
     let captionsAssPath = null;
-    if (ENABLE_KARAOKE_CAPTIONS) {
+    if (ENABLE_KARAOKE_CAPTIONS && skipCaptions !== 'true') {
       captionsAssPath = path.join(__dirname, '..', 'public', 'uploads', `${id}-nv-captions.ass`);
       try {
         generateKaraokeSubtitles(script, videoDuration, captionsAssPath, videoWidth, videoHeight);
