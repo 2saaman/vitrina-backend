@@ -221,17 +221,35 @@ app.get('/api/listings', checkAuth, (req, res) => {
 app.post('/api/narrate-video', checkAuth, upload.single('video'), async (req, res) => {
   const cleanupPaths = [];
   try {
-    const { script, addMusic, skipCaptions } = req.body;
+    const { script: rawScript, addMusic, skipCaptions } = req.body;
     if (!req.file) {
       return res.status(400).json({ error: 'Video fayl kerak' });
-    }
-    if (!script || !script.trim()) {
-      return res.status(400).json({ error: 'Ssenariy matni (script) kerak' });
     }
 
     const id = uuidv4();
     const inputVideoPath = req.file.path;
     cleanupPaths.push(inputVideoPath);
+
+    let script = rawScript && rawScript.trim() ? rawScript.trim() : null;
+    let scriptSource = 'manual';
+
+    if (!script) {
+      console.log('🔍 Ssenariy matni berilmagan — video ichidan avtomatik o\'qishga (OCR) urinilmoqda...');
+      try {
+        const { extractCaptionText } = require('./ocrGenerator');
+        script = await extractCaptionText(inputVideoPath);
+        scriptSource = 'ocr';
+      } catch (e) {
+        console.log('🔍 OCR xatosi:', e.message);
+      }
+      if (!script) {
+        cleanupPaths.forEach((p) => fs.unlink(p, () => {}));
+        return res.status(400).json({
+          error: "Video ichidagi yozuvni avtomatik o'qib bo'lmadi. Iltimos, ssenariy matnini qo'lda kiriting."
+        });
+      }
+      console.log('🔍 OCR orqali o\'qilgan matn:', script);
+    }
 
     const voiceOutputPath = path.join(__dirname, '..', 'public', 'uploads', `${id}-nv-voice.ogg`);
     let voicePath = null;
@@ -276,7 +294,14 @@ app.post('/api/narrate-video', checkAuth, upload.single('video'), async (req, re
     fs.unlink(finalOutputPath, () => {});
     cleanupPaths.forEach((p) => fs.unlink(p, () => {}));
 
-    res.json({ videoUrl, message: '✅ Video tayyor — yuklab oling va kerakli joyga joylashtiring.' });
+    res.json({
+      videoUrl,
+      usedScript: script,
+      scriptSource,
+      message: scriptSource === 'ocr'
+        ? '✅ Video tayyor. Matn video ichidan avtomatik o\'qildi — natijani albatta tekshiring.'
+        : '✅ Video tayyor — yuklab oling va kerakli joyga joylashtiring.'
+    });
   } catch (err) {
     cleanupPaths.forEach((p) => fs.unlink(p, () => {}));
     console.error(err);
