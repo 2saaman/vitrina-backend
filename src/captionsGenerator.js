@@ -2,6 +2,10 @@
 // Video ustiga "karaoke" uslubidagi — so'z-so'z yorishib boradigan —
 // subtitr (.ass fayl) yaratadi. FFmpeg'ning "subtitles" filtri orqali
 // videoga "kuydiriladi" (burn-in), TikTok/Reels'dagi trend uslub kabi.
+//
+// DIZAYN: yorqin, katta, diqqatni tortuvchi uslub — oltin/sariq rangda
+// yorishib boruvchi matn, qalin qora chegara bilan (har qanday fon
+// rangida ham o'qilishi oson bo'lishi uchun).
 
 const fs = require('fs');
 
@@ -16,25 +20,14 @@ function formatAssTime(seconds) {
   return `${h}:${String(m).padStart(2, '0')}:${s.toFixed(2).padStart(5, '0')}`;
 }
 
-/**
- * Berilgan matndan karaoke uslubidagi .ass subtitr fayl yaratadi.
- * @param {string} text - ko'rsatiladigan matn (masalan narration script)
- * @param {number} totalDuration - matn shu necha soniyaga taqsimlanadi
- * @param {string} outputPath - .ass faylni qayerga saqlash
- * @param {number} width
- * @param {number} height
- */
 function generateKaraokeSubtitles(text, totalDuration, outputPath, width, height) {
   const words = String(text).trim().split(/\s+/).filter(Boolean);
   if (words.length === 0 || totalDuration <= 0) return null;
 
-  // Har bir so'zga vaqtni harflar soniga proporsional taqsimlaymiz —
-  // uzunroq so'zlar biroz ko'proq vaqt oladi, tabiiyroq ko'rinadi.
   const weights = words.map((w) => w.length + 2);
   const totalWeight = weights.reduce((a, b) => a + b, 0);
 
-  // Ekranda bir vaqtda ko'p so'z sig'may qolmasligi uchun har 5 so'zdan bitta qator
-  const WORDS_PER_LINE = 5;
+  const WORDS_PER_LINE = 4;
   const lines = [];
   for (let i = 0; i < words.length; i += WORDS_PER_LINE) {
     lines.push({ words: words.slice(i, i + WORDS_PER_LINE), weights: weights.slice(i, i + WORDS_PER_LINE) });
@@ -53,7 +46,7 @@ function generateKaraokeSubtitles(text, totalDuration, outputPath, width, height
     line.words.forEach((w, idx) => {
       const wordDuration = lineDuration * (line.weights[idx] / lineWeight);
       const centiseconds = Math.max(1, Math.round(wordDuration * 100));
-      karaokeText += `{\\k${centiseconds}}${escapeAssText(w)} `;
+      karaokeText += `{\\k${centiseconds}}${escapeAssText(w.toUpperCase())} `;
     });
 
     events.push(
@@ -63,8 +56,8 @@ function generateKaraokeSubtitles(text, totalDuration, outputPath, width, height
     cursor = lineEnd;
   });
 
-  const fontSize = Math.round(width / 16);
-  const marginV = Math.round(height * 0.12);
+  const fontSize = Math.round(width / 11);
+  const marginV = Math.round(height * 0.16);
 
   const assContent = `[Script Info]
 ScriptType: v4.00+
@@ -74,7 +67,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Karaoke,DejaVu Sans,${fontSize},&H00FFFFFF,&H0000D7FF,&H00000000,&H90000000,1,0,0,0,100,100,0,0,1,3,0,2,40,40,${marginV},1
+Style: Karaoke,DejaVu Sans,${fontSize},&H00FFFFFF,&H0000D7FF,&H00000000,&HB0000000,1,0,0,0,100,100,0,0,1,4,1,2,30,30,${marginV},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
