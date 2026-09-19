@@ -45,6 +45,13 @@ function isSubtitlesSupported() {
 
 /**
  * Mavjud videoga ovoz (+ ixtiyoriy fon musiqasi) va karaoke subtitr qo'shadi.
+ * @param {object} opts
+ * @param {string} opts.inputVideoPath - kirish video fayli
+ * @param {string} opts.outputPath - chiqish video fayli
+ * @param {string} [opts.voicePath] - ovozli tavsif audio fayli
+ * @param {string} [opts.musicPath] - fon musiqasi fayli
+ * @param {string} [opts.captionsAssPath] - karaoke subtitr .ass fayli
+ * @returns {Promise<{outputPath: string, duration: number}>}
  */
 function narrateExistingVideo({ inputVideoPath, outputPath, voicePath, musicPath, captionsAssPath }) {
   return new Promise((resolve, reject) => {
@@ -69,16 +76,19 @@ function narrateExistingVideo({ inputVideoPath, outputPath, voicePath, musicPath
 
     const filterParts = [];
 
+    // Video qatlami: agar subtitr bo'lsa, uni "kuydiramiz"
     let videoLabel = '0:v';
+    const scaleFilter = `scale='min(720,iw)':'-2'`;
     if (hasCaptions) {
       const escapedPath = captionsAssPath.replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'");
-      filterParts.push(`[0:v]subtitles=filename='${escapedPath}',format=yuv420p[vout]`);
+      filterParts.push(`[0:v]${scaleFilter},subtitles=filename='${escapedPath}',format=yuv420p[vout]`);
       videoLabel = 'vout';
     } else {
-      filterParts.push(`[0:v]format=yuv420p[vout]`);
+      filterParts.push(`[0:v]${scaleFilter},format=yuv420p[vout]`);
       videoLabel = 'vout';
     }
 
+    // Audio qatlami: ovoz + musiqa (ikkalasi ham ixtiyoriy)
     let audioLabel = null;
     if (hasVoice && hasMusic) {
       filterParts.push(`[${voiceIdx}:a]volume=1.4,apad=pad_dur=30[vo]`);
@@ -109,6 +119,7 @@ function narrateExistingVideo({ inputVideoPath, outputPath, voicePath, musicPath
       '-pix_fmt', 'yuv420p',
       '-preset', 'ultrafast',
       '-threads', '1',
+      '-crf', '28',
       '-movflags', '+faststart',
       '-y',
       outputPath
