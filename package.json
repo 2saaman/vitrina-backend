@@ -19,7 +19,8 @@
     "axios": "^1.7.7",
     "dotenv": "^16.4.5",
     "uuid": "^9.0.1",
-    "edge-tts-universal": "latest"
+    "edge-tts-universal": "latest",
+    "tesseract.js": "latest"
   },
   "engines": {
     "node": ">=18.0.0"
