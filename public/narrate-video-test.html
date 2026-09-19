@@ -30,6 +30,7 @@
     <textarea id="script" rows="5" required placeholder="Masalan: Bugun sizga ajoyib yangilik bor..."></textarea>
 
     <label><input type="checkbox" id="addMusic" style="width:auto;display:inline"> Fon musiqasi ham qo'shilsin</label>
+    <label><input type="checkbox" id="skipCaptions" style="width:auto;display:inline"> Subtitr KERAK EMAS (video ichida yozuv allaqachon bor)</label>
 
     <button type="submit" id="submitBtn">Yaratish</button>
   </form>
@@ -51,6 +52,7 @@ document.getElementById('form').addEventListener('submit', async (e) => {
     fd.append('video', document.getElementById('video').files[0]);
     fd.append('script', document.getElementById('script').value);
     fd.append('addMusic', document.getElementById('addMusic').checked ? 'true' : 'false');
+    fd.append('skipCaptions', document.getElementById('skipCaptions').checked ? 'true' : 'false');
 
     const res = await fetch('https://vitrina-backend-6o1f.onrender.com/api/narrate-video', {
       method: 'POST',
