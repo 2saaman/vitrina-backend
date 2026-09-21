@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const { getDueListings, updateListing } = require('./db');
 const { publishReel } = require('./instagramPublisher');
+const { publishToTelegram } = require('./telegramPublisher');
 const { fetchOnlineFollowers } = require('./instagramInsights');
 
 function startScheduler() {
@@ -21,6 +22,19 @@ function startScheduler() {
           videoUrl,
           caption: fullCaption
         });
+
+        let telegramMessageId = null;
+        try {
+          telegramMessageId = await publishToTelegram({
+            botToken: process.env.TELEGRAM_BOT_TOKEN,
+            channelUsername: process.env.TELEGRAM_CHANNEL,
+            videoUrl,
+            caption: fullCaption
+          });
+          console.log(`✅ Telegram'ga ham joylandi: xabar #${telegramMessageId}`);
+        } catch (tgErr) {
+          console.log('📨 Telegram\'ga joylashda xatolik (Instagram\'ga baribir joylandi):', tgErr.message);
+        }
 
         updateListing(listing.id, { status: 'joylandi', postedAt: new Date().toISOString(), igPostId });
 
@@ -43,7 +57,6 @@ function startScheduler() {
   });
 
   // Server ishga tushganda ham bir marta darhol tekshirib qo'yamiz
-  // (6 soat kutmasdan, imkon bo'lsa darhol real ma'lumotdan foydalanish uchun)
   fetchOnlineFollowers({
     igUserId: process.env.IG_USER_ID,
     accessToken: process.env.IG_ACCESS_TOKEN
