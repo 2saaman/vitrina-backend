@@ -22,6 +22,7 @@ const { uploadVideo } = require('./cloudinary');
 const { startScheduler } = require('./scheduler');
 const { optimizePostTime } = require('./postTimeOptimizer');
 const { publishReel } = require('./instagramPublisher');
+const { publishToTelegram } = require('./telegramPublisher');
 const { getInsightsStatus, fetchOnlineFollowers } = require('./instagramInsights');
 
 const app = express();
@@ -158,12 +159,25 @@ app.post('/api/listings', checkAuth, upload.array('images', MAX_IMAGES), async (
           caption: fullCaption
         });
 
+        let telegramMessageId = null;
+        try {
+          telegramMessageId = await publishToTelegram({
+            botToken: process.env.TELEGRAM_BOT_TOKEN,
+            channelUsername: process.env.TELEGRAM_CHANNEL,
+            videoUrl,
+            caption: fullCaption
+          });
+          console.log(`✅ Telegram'ga ham joylandi: xabar #${telegramMessageId}`);
+        } catch (tgErr) {
+          console.log('📨 Telegram\'ga joylashda xatolik (Instagram\'ga baribir joylandi):', tgErr.message);
+        }
+
         updateListing(id, { status: 'joylandi', postedAt: new Date().toISOString(), igPostId });
         console.log(`✅ Darhol joylandi: ${id} -> IG post ${igPostId}`);
 
         return res.json({
           id, caption, hashtags, videoUrl,
-          status: 'joylandi', igPostId,
+          status: 'joylandi', igPostId, telegramMessageId,
           message: '✅ Video darhol Instagram\'ga joylandi!'
         });
       } catch (publishErr) {
