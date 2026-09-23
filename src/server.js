@@ -64,6 +64,10 @@ function checkAuth(req, res, next) {
   next();
 }
 
+// Asosiy sahifa — UptimeRobot va boshqa monitoring xizmatlari uchun
+// oddiy "200 OK" javobi (health check bilan bir xil ma'noda)
+app.get('/', (req, res) => res.json({ ok: true, service: 'vitrina-backend' }));
+
 // Yangi e'lon qo'shish: rasmlar + ma'lumot + qachon joylanishi
 //
 // IKKI XIL REJIM:
