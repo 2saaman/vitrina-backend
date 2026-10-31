@@ -6,9 +6,8 @@ const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 
-const { addListing, getAllListings, updateListing } = require('./db');
-const { generateVideoFromImages, computeSlideshowDuration, WIDTH, HEIGHT } = require('./videoGenerator');
-const { generateNarrationScript } = require('./narrationGenerator');
+const { getAllListings } = require('./db');
+const { WIDTH } = require('./videoGenerator');
 const { synthesizeSpeech } = require('./ttsGenerator');
 const { generateKaraokeSubtitles } = require('./captionsGenerator');
 const { narrateExistingVideo } = require('./videoNarrator');
@@ -17,13 +16,11 @@ const { narrateExistingVideo } = require('./videoNarrator');
 // ENABLE_KARAOKE_CAPTIONS=false qilib qo'ysangiz, kodni o'zgartirmasdan
 // darhol o'chirib qo'yish mumkin (yoqmasa, shunchaki shu qiymatni o'zgartiring).
 const ENABLE_KARAOKE_CAPTIONS = process.env.ENABLE_KARAOKE_CAPTIONS !== 'false';
-const { generateCaption, generateHashtags } = require('./captionGenerator');
 const { uploadVideo } = require('./cloudinary');
 const { startScheduler } = require('./scheduler');
-const { optimizePostTime } = require('./postTimeOptimizer');
-const { publishReel } = require('./instagramPublisher');
-const { publishToTelegram } = require('./telegramPublisher');
 const { getInsightsStatus, fetchOnlineFollowers } = require('./instagramInsights');
+const { createAndPublishListing, pickRandomMusic } = require('./listingPipeline');
+const { startTelegramBot } = require('./telegramBot');
 
 const app = express();
 app.use(cors());
@@ -33,27 +30,6 @@ app.use('/videos', express.static(path.join(__dirname, '..', 'public', 'videos')
 
 const upload = multer({ dest: path.join(__dirname, '..', 'public', 'uploads') });
 const MAX_IMAGES = 5;
-const MUSIC_DIR = path.join(__dirname, '..', 'public', 'music');
-
-// public/music papkasidan tasodifiy musiqa tanlaydi (fayllar bo'lmasa, musiqasiz davom etadi)
-function pickRandomMusic() {
-  try {
-    console.log('🎵 Musiqa papkasi tekshirilmoqda:', MUSIC_DIR);
-    if (!fs.existsSync(MUSIC_DIR)) {
-      console.log('🎵 Musiqa papkasi topilmadi!');
-      return null;
-    }
-    const files = fs.readdirSync(MUSIC_DIR).filter((f) => f.toLowerCase().endsWith('.mp3'));
-    console.log('🎵 Topilgan mp3 fayllar:', files);
-    if (files.length === 0) return null;
-    const chosen = files[Math.floor(Math.random() * files.length)];
-    console.log('🎵 Tanlangan musiqa:', chosen);
-    return path.join(MUSIC_DIR, chosen);
-  } catch (e) {
-    console.log('🎵 Musiqa tanlashda xatolik:', e.message);
-    return null;
-  }
-}
 
 // Oddiy himoya: har bir so'rov ADMIN_SECRET bilan kelishi kerak
 function checkAuth(req, res, next) {
@@ -75,6 +51,9 @@ app.get('/', (req, res) => res.json({ ok: true, service: 'vitrina-backend' }));
 //      scheduler (har daqiqada tekshiradi) belgilangan vaqt kelganda joylaydi.
 //   2) scheduledFor BERILMAGAN (bo'sh) -> video tayyor bo'lgach, DARHOL
 //      Instagram'ga joylanadi, scheduler'ni kutish shart emas.
+//
+// Video yasash + joylash mantig'i endi listingPipeline.js ichida —
+// shu fayl Telegram bot bilan ham baham ko'riladi (telegramBot.js).
 app.post('/api/listings', checkAuth, upload.array('images', MAX_IMAGES), async (req, res) => {
   try {
     const { uyTuri, manzil, narx, qavat, xonalar, maydon, xususiyat, scheduledFor } = req.body;
@@ -82,145 +61,23 @@ app.post('/api/listings', checkAuth, upload.array('images', MAX_IMAGES), async (
       return res.status(400).json({ error: 'Kamida bitta rasm kerak' });
     }
 
-    const id = uuidv4();
     const imagePaths = req.files.map((f) => f.path);
-    const videoFileName = `${id}.mp4`;
-    const videoOutputPath = path.join(__dirname, '..', 'public', 'videos', videoFileName);
+    const fields = { uyTuri, manzil, narx, qavat, xonalar, maydon, xususiyat };
 
-    const musicPath = pickRandomMusic();
+    const result = await createAndPublishListing(imagePaths, fields, scheduledFor);
 
-    // Ovozli tavsif (AI narration) yaratish — xatolik bo'lsa ham dastur
-    // to'xtamaydi, shunchaki ovozsiz (faqat musiqali) video yaratiladi.
-    const narrationScript = generateNarrationScript({ uyTuri, manzil, narx, xonalar, maydon });
-    const voiceOutputPath = path.join(__dirname, '..', 'public', 'uploads', `${id}-voice.ogg`);
-    let voicePath = null;
-    try {
-      voicePath = await synthesizeSpeech(narrationScript, voiceOutputPath);
-    } catch (e) {
-      console.log('🔊 Ovozli tavsif yaratishda kutilmagan xatolik:', e.message);
-    }
-
-    // Karaoke subtitr (.ass fayl) — ENABLE_KARAOKE_CAPTIONS orqali yoqib/
-    // o'chirish mumkin. Bu vizual effekt bo'lgani uchun ovoz mavjud
-    // bo'lmasa ham ishlaydi (taxminiy vaqt taqsimoti bilan).
-    let captionsAssPath = null;
-    if (ENABLE_KARAOKE_CAPTIONS) {
-      const slideshowDuration = computeSlideshowDuration(imagePaths.length);
-      captionsAssPath = path.join(__dirname, '..', 'public', 'uploads', `${id}-captions.ass`);
-      try {
-        generateKaraokeSubtitles(narrationScript, slideshowDuration, captionsAssPath, WIDTH, HEIGHT);
-      } catch (e) {
-        console.log('🎤 Karaoke subtitr yaratishda xatolik, o\'tkazib yuboriladi:', e.message);
-        captionsAssPath = null;
-      }
-    }
-
-    await generateVideoFromImages(
-      imagePaths,
-      videoOutputPath,
-      { musicPath, voicePath },
-      { manzil, narx, xonalar },
-      captionsAssPath
-    );
-
-    // Vaqtinchalik yuklangan rasmlar, ovoz va subtitr fayllarini tozalash
-    imagePaths.forEach((p) => fs.unlink(p, () => {}));
-    if (voicePath) fs.unlink(voicePath, () => {});
-    if (captionsAssPath) fs.unlink(captionsAssPath, () => {});
-
-    // Videoni Cloudinary'ga yuklash (turg'un havola olish uchun)
-    const videoUrl = await uploadVideo(videoOutputPath, id);
-
-    // Lokal video faylni endi kerak emas, o'chiramiz
-    fs.unlink(videoOutputPath, () => {});
-
-    const data = { uyTuri, manzil, narx, qavat, xonalar, maydon, xususiyat };
-    const caption = generateCaption(data);
-    const hashtags = generateHashtags(data);
-    const fullCaption = `${caption}\n\n${hashtags.join(' ')}`;
-
-    const hasScheduledTime = scheduledFor && String(scheduledFor).trim() !== '';
-
-    // ============================================================
-    // 1-REJIM: DARHOL JOYLASH — scheduledFor berilmagan
-    // ============================================================
-    if (!hasScheduledTime) {
-      console.log('⚡ scheduledFor berilmagan — video darhol Instagram\'ga joylanmoqda...');
-
-      addListing({
-        id, uyTuri, manzil, narx, qavat, xonalar, maydon, xususiyat,
-        caption, hashtags, videoUrl,
-        status: 'joylanmoqda', scheduledFor: null,
-        postedAt: null, igPostId: null,
-        createdAt: new Date().toISOString()
+    if (result.status === 'xato') {
+      return res.status(500).json({
+        ...result,
+        message: `Joylashda xatolik: ${result.error}`
       });
-
-      try {
-        const igPostId = await publishReel({
-          igUserId: process.env.IG_USER_ID,
-          accessToken: process.env.IG_ACCESS_TOKEN,
-          videoUrl,
-          caption: fullCaption
-        });
-
-        let telegramMessageId = null;
-        try {
-          telegramMessageId = await publishToTelegram({
-            botToken: process.env.TELEGRAM_BOT_TOKEN,
-            channelUsername: process.env.TELEGRAM_CHANNEL,
-            videoUrl,
-            caption: fullCaption
-          });
-          console.log(`✅ Telegram'ga ham joylandi: xabar #${telegramMessageId}`);
-        } catch (tgErr) {
-          console.log('📨 Telegram\'ga joylashda xatolik (Instagram\'ga baribir joylandi):', tgErr.message);
-        }
-
-        updateListing(id, { status: 'joylandi', postedAt: new Date().toISOString(), igPostId });
-        console.log(`✅ Darhol joylandi: ${id} -> IG post ${igPostId}`);
-
-        return res.json({
-          id, caption, hashtags, videoUrl,
-          status: 'joylandi', igPostId, telegramMessageId,
-          message: '✅ Video darhol Instagram\'ga joylandi!'
-        });
-      } catch (publishErr) {
-        updateListing(id, { status: 'xato' });
-        console.error(`❌ Darhol joylashda xatolik (${id}):`, publishErr.message);
-        return res.status(500).json({
-          id, caption, hashtags, videoUrl,
-          status: 'xato',
-          error: `Joylashda xatolik: ${publishErr.message}`
-        });
-      }
     }
 
-    // ============================================================
-    // 2-REJIM: REJALASHTIRILGAN JOYLASH — scheduledFor berilgan
-    // ============================================================
-    let finalScheduledFor = scheduledFor;
-    try {
-      const { optimizedTime, wasAdjusted, originalTime } = optimizePostTime(scheduledFor);
-      finalScheduledFor = optimizedTime.toISOString();
-      if (wasAdjusted) {
-        console.log(`⏰ Vaqt optimallashtirildi: ${originalTime.toISOString()} → ${finalScheduledFor}`);
-      } else {
-        console.log(`⏰ Vaqt allaqachon optimal: ${finalScheduledFor}`);
-      }
-    } catch (e) {
-      console.log('⏰ Vaqtni optimallashtirishda xatolik, asl vaqt ishlatiladi:', e.message);
-      finalScheduledFor = scheduledFor;
-    }
+    const message = result.status === 'joylandi'
+      ? "✅ Video darhol Instagram'ga joylandi!"
+      : undefined;
 
-    addListing({
-      id, uyTuri, manzil, narx, qavat, xonalar, maydon, xususiyat,
-      caption, hashtags, videoUrl,
-      status: 'kutilmoqda', scheduledFor: finalScheduledFor,
-      postedAt: null, igPostId: null,
-      createdAt: new Date().toISOString()
-    });
-
-    res.json({ id, caption, hashtags, videoUrl, scheduledFor: finalScheduledFor, status: 'kutilmoqda' });
+    return res.json({ ...result, message });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
@@ -285,7 +142,7 @@ app.post('/api/narrate-video', checkAuth, upload.single('video'), async (req, re
     const info = getVideoInfo(inputVideoPath);
     const videoDuration = info.duration || 15;
     const videoWidth = info.width || WIDTH;
-    const videoHeight = info.height || HEIGHT;
+    const videoHeight = info.height || require('./videoGenerator').HEIGHT;
 
     let captionsAssPath = null;
     if (ENABLE_KARAOKE_CAPTIONS && skipCaptions !== 'true') {
@@ -359,4 +216,5 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Vitrina backend ${PORT}-portda ishga tushdi`);
   startScheduler();
+  startTelegramBot();
 });
