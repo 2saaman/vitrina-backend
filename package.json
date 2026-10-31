@@ -20,7 +20,8 @@
     "dotenv": "^16.4.5",
     "uuid": "^9.0.1",
     "edge-tts-universal": "latest",
-    "tesseract.js": "latest"
+    "tesseract.js": "latest",
+    "node-telegram-bot-api": "^0.66.0"
   },
   "engines": {
     "node": ">=18.0.0"
