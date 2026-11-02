@@ -2,29 +2,33 @@
 // Telegram orqali "bot"ga rasm + matn yuborib, avtomatik video yasab,
 // Instagram va Telegram kanalga joylaydigan tizim.
 //
-// QANDAY ISHLATISH (botga yozadigan administrator uchun):
-//   1. Botga Telegram'da shaxsiy xabar oching (agar hali ochmagan bo'lsangiz,
-//      botning username'ini qidirib, "Start" tugmasini bosing).
-//   2. 1 dan 5 tagacha rasmni BIRGALIKDA (albom sifatida) tanlab yuboring.
-//   3. Rasmlarni yuborishdan oldin (yoki rasmlar bilan birga, "caption"
-//      qismiga) quyidagi shablon asosida matn yozing:
+// QANDAY ISHLATISH:
+//   1. Botga 1-5 ta rasmni albom qilib yuboring (rasm yoki "fayl" ko'rinishida
+//      — ikkalasi ham qabul qilinadi).
+//   2. Rasmning izoh (caption) qismiga e'lon matnini yozing. Ikki xil
+//      ko'rinish qabul qilinadi:
 //
-//      Uy turi: Kvartira
-//      Manzil: Chilonzor tumani
-//      Narx: 45000
-//      Qavat: 3
-//      Xonalar: 2
-//      Maydon: 60 m²
-//      Xususiyat: Yevroremont, mebel bilan
+//      A) SHABLON:
+//         Uy turi: Kvartira
+//         Manzil: Chilonzor tumani
+//         Narx: 45000
+//         Qavat: 3
+//         Xonalar: 2
+//         Maydon: 60 m²
+//         Xususiyat: Yevroremont, mebel bilan
 //
-//      ("Uy turi", "Manzil", "Narx", "Xonalar" — MAJBURIY. Qolganlari ixtiyoriy.)
+//      B) ERKIN MATN (masalan boshqa kanaldan nusxalangan e'lon):
+//         📍 Юнусобод тумани Обод махалла
+//         - 1.8 соток 250 m2
+//         - 6 хона
+//         💵 265.000$
+//         Bot manzil, narx, xona, maydonni matndan o'zi ajratib oladi
+//         (taxminiy — natijani tekshirib turing).
 //
-//   4. Bot avtomatik video yasaydi, Instagram + Telegram kanalga joylaydi,
-//      va natijani (muvaffaqiyat yoki xatolik) sizga qaytarib yozadi.
+//   3. Bot video yasaydi, Instagram + Telegram kanalga joylaydi va natijani
+//      sizga yozadi.
 //
-// XAVFSIZLIK: faqat Render'dagi ADMIN_TELEGRAM_ID o'zgaruvchisida
-// ko'rsatilgan Telegram foydalanuvchisidan kelgan xabarlar qabul qilinadi.
-// Boshqa hech kim (hatto bot linkini bilsa ham) undan foydalana olmaydi.
+// XAVFSIZLIK: faqat ADMIN_TELEGRAM_ID dagi foydalanuvchi xabarlari qabul qilinadi.
 
 const fs = require('fs');
 const path = require('path');
@@ -37,14 +41,9 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const ADMIN_ID = process.env.ADMIN_TELEGRAM_ID ? String(process.env.ADMIN_TELEGRAM_ID).trim() : null;
 const UPLOADS_DIR = path.join(__dirname, '..', 'public', 'uploads');
 
-// Bir nechta rasm "albom" sifatida yuborilganda, Telegram ularni alohida-
-// alohida xabar qilib yuboradi (bir xil media_group_id bilan). Shuning
-// uchun oxirgi rasm kelganidan keyin shuncha millisekund kutamiz — agar
-// shu vaqt ichida yana rasm kelmasa, albom "tugadi" deb hisoblaymiz.
+// Albomdagi oxirgi rasm kelgandan keyin shuncha kutamiz (millisekund)
 const MEDIA_GROUP_WAIT_MS = 2500;
 
-// Caption matnidagi qatorlarni (masalan "Manzil: Chilonzor") qaysi
-// maydonga tegishli ekanini aniqlash uchun kalit so'zlar (kichik harfda)
 const FIELD_ALIASES = {
   uyTuri: ['uy turi', 'uyturi', 'tur', 'turi'],
   manzil: ['manzil', 'joylashuv', 'joyi'],
@@ -67,13 +66,15 @@ Xonalar: 2
 Maydon: 60 m²
 Xususiyat: Yevroremont, mebel bilan
 
-("Uy turi", "Manzil", "Narx" va "Xonalar" — majburiy, qolganlari ixtiyoriy.)`;
+("Uy turi", "Manzil", "Narx" va "Xonalar" — majburiy, qolganlari ixtiyoriy.)
 
-function parseCaption(caption) {
+Yoki oddiy e'lon matnini yozing (📍 manzil, "6 хона", "250 m2", "265.000$" kabi) — bot o'zi ajratib oladi.`;
+
+// ---------- 1) SHABLON bo'yicha o'qish ----------
+function parseTemplateCaption(caption) {
   const fields = {};
   if (!caption) return fields;
-  const lines = String(caption).split('\n');
-  lines.forEach((line) => {
+  String(caption).split('\n').forEach((line) => {
     const idx = line.indexOf(':');
     if (idx === -1) return;
     const label = line.slice(0, idx).trim().toLowerCase();
@@ -89,8 +90,83 @@ function parseCaption(caption) {
   return fields;
 }
 
+// ---------- 2) ERKIN MATNdan taxminiy ajratib olish ----------
+function stripEmoji(s) {
+  return String(s)
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, '')
+    .trim();
+}
+
+function parseFreeText(text) {
+  const fields = {};
+  if (!text) return fields;
+  const lines = String(text).split('\n').map((l) => l.trim());
+
+  // NARX: $ yoki 💵/💰 bor qator
+  const priceLine = lines.find((l) => /[$]|usd|dollar|💵|💰/i.test(l));
+  if (priceLine) {
+    const digits = priceLine.replace(/\D/g, '');
+    if (digits.length >= 4) fields.narx = digits;
+  }
+
+  // XONALAR: "6 хона", "3 xona", "2 комнат"
+  const roomMatch = text.match(/(\d+)\s*(?:та\s*)?(?:хона|xona|комнат|ta\s*xona)/i);
+  if (roomMatch) fields.xonalar = roomMatch[1];
+
+  // MAYDON: "250 m2", "60 м²" va/yoki "1.8 соток"
+  const areaMatch = text.match(/(\d+(?:[.,]\d+)?)\s*(?:m2|м2|m²|м²|kv\.?\s*m|кв\.?\s*м)/i);
+  const sotMatch = text.match(/(\d+(?:[.,]\d+)?)\s*(?:сотк\S*|соток|sotix|sotih|sotka)/i);
+  const areaParts = [];
+  if (sotMatch) areaParts.push(`${sotMatch[1]} sotix`);
+  if (areaMatch) areaParts.push(`${areaMatch[1]} m²`);
+  if (areaParts.length) fields.maydon = areaParts.join(', ');
+
+  // QAVAT
+  const floorMatch = text.match(/(\d+)\s*[- ]?\s*(?:qavat|этаж|qavatli)/i);
+  if (floorMatch) fields.qavat = floorMatch[1];
+
+  // MANZIL: 📍 qatori (+ undan keyingi "-" bilan boshlanmaydigan qatorlar)
+  const pinIdx = lines.findIndex((l) => l.includes('📍'));
+  if (pinIdx !== -1) {
+    const addrParts = [stripEmoji(lines[pinIdx])];
+    for (let i = pinIdx + 1; i < lines.length; i++) {
+      if (!lines[i] || /^[-•–]/.test(lines[i]) || /[$💵💰📞☎]/.test(lines[i])) break;
+      addrParts.push(stripEmoji(lines[i]));
+    }
+    fields.manzil = addrParts.filter(Boolean).join(', ');
+  }
+
+  // UY TURI
+  if (/квартир|kvartira/i.test(text)) fields.uyTuri = 'Kvartira';
+  else if (/соток|сотих|sotix|ховли|hovli|дом\b|участок/i.test(text)) fields.uyTuri = 'Hovli uy';
+  else fields.uyTuri = 'Uy';
+
+  // XUSUSIYAT: "-" bilan boshlangan qatorlar
+  const bullets = lines
+    .filter((l) => /^[-•–]/.test(l))
+    .map((l) => l.replace(/^[-•–]\s*/, ''));
+  if (bullets.length) fields.xususiyat = bullets.join(', ');
+
+  return fields;
+}
+
+// Avval shablon, yetishmagan maydonlarni erkin matndan to'ldiramiz
+function parseCaption(caption) {
+  const template = parseTemplateCaption(caption);
+  const free = parseFreeText(caption);
+  const merged = { ...free, ...template }; // shablon ustuvor
+  return merged;
+}
+
 function findMissingFields(fields) {
   return REQUIRED_FIELDS.filter((k) => !fields[k] || !String(fields[k]).trim());
+}
+
+function extFromMime(mime) {
+  if (!mime) return '.jpg';
+  if (mime.includes('png')) return '.png';
+  if (mime.includes('webp')) return '.webp';
+  return '.jpg';
 }
 
 function startTelegramBot() {
@@ -110,8 +186,7 @@ function startTelegramBot() {
     console.log('🤖 Telegram bot polling xatosi:', err.message);
   });
 
-  // media_group_id bo'yicha kelayotgan rasmlarni vaqtinchalik yig'ish
-  // Map: media_group_id -> { photos: [fileId...], caption, chatId, timer }
+  // media_group_id -> { photos: [{fileId, ext}], caption, chatId, timer }
   const pendingGroups = new Map();
 
   async function downloadPhoto(fileId, destPath) {
@@ -121,29 +196,38 @@ function startTelegramBot() {
     return destPath;
   }
 
-  async function processSubmission(chatId, photoFileIds, caption) {
+  async function processSubmission(chatId, photos, caption) {
     const fields = parseCaption(caption);
     const missing = findMissingFields(fields);
 
     if (missing.length > 0) {
       await bot.sendMessage(chatId,
-        `❌ Quyidagi maydonlar yetishmayapti: ${missing.join(', ')}\n\n${TEMPLATE_TEXT}`);
+        `❌ Matndan quyidagilarni aniqlay olmadim: ${missing.join(', ')}\n\n${TEMPLATE_TEXT}`);
       return;
     }
-    if (!photoFileIds || photoFileIds.length === 0) {
+    if (!photos || photos.length === 0) {
       await bot.sendMessage(chatId, '❌ Kamida bitta rasm kerak.');
       return;
     }
 
+    // Instagram uchun ko'pi bilan 5 ta rasm
+    const usedPhotos = photos.slice(0, 5);
+
+    const summary =
+      `📋 Aniqlangan ma'lumot:\n` +
+      `Uy turi: ${fields.uyTuri}\nManzil: ${fields.manzil}\nNarx: ${fields.narx}\nXonalar: ${fields.xonalar}` +
+      (fields.maydon ? `\nMaydon: ${fields.maydon}` : '') +
+      (fields.qavat ? `\nQavat: ${fields.qavat}` : '') +
+      (fields.xususiyat ? `\nXususiyat: ${fields.xususiyat}` : '');
     await bot.sendMessage(chatId,
-      `⏳ Video yasalmoqda... (${photoFileIds.length} ta rasm) — 1-2 daqiqa kutishingiz mumkin.`);
+      `${summary}\n\n⏳ Video yasalmoqda... (${usedPhotos.length} ta rasm) — 1-2 daqiqa kutishingiz mumkin.`);
 
     const batchId = uuidv4();
     const imagePaths = [];
     try {
-      for (let i = 0; i < photoFileIds.length; i++) {
-        const destPath = path.join(UPLOADS_DIR, `${batchId}-${i}.jpg`);
-        await downloadPhoto(photoFileIds[i], destPath);
+      for (let i = 0; i < usedPhotos.length; i++) {
+        const destPath = path.join(UPLOADS_DIR, `${batchId}-${i}${usedPhotos[i].ext}`);
+        await downloadPhoto(usedPhotos[i].fileId, destPath);
         imagePaths.push(destPath);
       }
     } catch (e) {
@@ -176,7 +260,6 @@ function startTelegramBot() {
     try {
       const chatId = msg.chat.id;
 
-      // Faqat ADMIN_TELEGRAM_ID'dagi foydalanuvchidan kelgan xabarlar qabul qilinadi
       if (!msg.from || String(msg.from.id) !== ADMIN_ID) {
         return;
       }
@@ -187,25 +270,34 @@ function startTelegramBot() {
         return;
       }
 
-      if (!msg.photo) return;
+      // Rasm: oddiy "photo" yoki "fayl" (document) ko'rinishida
+      let photo = null;
+      if (msg.photo && msg.photo.length) {
+        photo = { fileId: msg.photo[msg.photo.length - 1].file_id, ext: '.jpg' };
+      } else if (msg.document && msg.document.mime_type && msg.document.mime_type.startsWith('image/')) {
+        photo = { fileId: msg.document.file_id, ext: extFromMime(msg.document.mime_type) };
+      }
 
-      // Telegram bir nechta o'lchamda yuboradi — eng kattasini olamiz
-      const fileId = msg.photo[msg.photo.length - 1].file_id;
+      if (!photo) {
+        // Admin matn yozdi, lekin rasm yo'q — yo'l-yo'riq beramiz
+        await bot.sendMessage(chatId,
+          `Rasm topilmadi. Rasmlarni matn bilan birga (caption qismida) yuboring.\n\n${TEMPLATE_TEXT}`);
+        return;
+      }
+
       const caption = msg.caption || '';
       const groupId = msg.media_group_id;
 
       if (!groupId) {
-        // Yagona rasm (albom emas) — darhol qayta ishlanadi
-        await processSubmission(chatId, [fileId], caption);
+        await processSubmission(chatId, [photo], caption);
         return;
       }
 
-      // Albomga tegishli rasm — navbatga qo'shamiz va kutamiz
       if (!pendingGroups.has(groupId)) {
         pendingGroups.set(groupId, { photos: [], caption: '', chatId });
       }
       const group = pendingGroups.get(groupId);
-      group.photos.push(fileId);
+      group.photos.push(photo);
       if (caption) group.caption = caption;
 
       if (group.timer) clearTimeout(group.timer);
@@ -219,4 +311,4 @@ function startTelegramBot() {
   });
 }
 
-module.exports = { startTelegramBot };
+module.exports = { startTelegramBot, parseCaption };
