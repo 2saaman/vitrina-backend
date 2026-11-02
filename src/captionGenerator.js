@@ -1,100 +1,81 @@
 // captionGenerator.js
-const OPENERS = [
-  "Diqqat! Ajoyib taklif 🏡",
-  "Yangi e'lon — bu imkoniyatni qo'ldan boy bermang! ✨",
-  "O'zingiz yoki oilangiz uchun mukammal tanlov 🔑",
-  "Bugungi eng qiziqarli taklifimiz 👇"
-];
+// Instagram/Telegram uchun post matni (caption) va hashtag'lar yaratadi.
 
-const CTAS = [
-  "Batafsil ma'lumot va ko'rish uchun profildagi kontaktga yozing 📩",
-  "Qiziqsangiz, DM'ga yozing yoki qo'ng'iroq qiling ☎️",
-  "Bugunoq ko'rib kelishga yoziling — imkoniyat cheklangan!",
-  "Savollaringiz bo'lsa, xabar qoldiring, tez orada javob beramiz 💬"
-];
+const { toLatin } = require('./translit');
 
-// Katta auditoriyali (mashhur) — har doim qo'shiladi, lekin ko'pi bilan 2-3 tasi
-const HASHTAGS_BROAD = [
-  "#kochmasmulk", "#realestate", "#uy", "#toshkent", "#uzbekistan"
-];
+const MAX_XUSUSIYAT_CHARS = 350;
 
-// O'rta auditoriyali — mulk turiga bog'liq
-const HASHTAGS_MEDIUM = {
-  "kvartira": ["#kvartirasotiladi", "#kvartira", "#kvartiratoshkent"],
-  "hovli uy": ["#hovliuy", "#uysotiladi", "#hovliuytoshkent"],
-  "ofis": ["#ofissotiladi", "#tijoratkochmasmulk", "#ofistoshkent"],
-  "default": ["#uysotuv", "#mulk", "#uyijara"]
-};
-
-// Tor auditoriyali — hudud va narx toifasiga bog'liq, eng aniq auditoriyani topadi
-function buildNicheHashtags(data) {
-  const tags = [];
-  if (data.manzil) {
-    const first = data.manzil.split(',')[0].trim().toLowerCase().replace(/\s+/g, '');
-    if (first) {
-      tags.push('#' + first);
-      tags.push('#' + first + 'kochmasmulk');
-    }
-  }
-  if (data.xonalar) {
-    tags.push(`#${data.xonalar}xonaliuy`);
-  }
-  return tags;
+// "265000" -> "265 000$"; allaqachon valyutali bo'lsa, tegmaydi
+function formatPrice(narx) {
+  if (!narx) return '';
+  const s = String(narx).trim();
+  if (/[$a-zA-Zа-яА-Я]/.test(s)) return s;
+  const digits = s.replace(/\D/g, '');
+  if (!digits) return s;
+  return `${digits.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}$`;
 }
 
-function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
-
-// Massivdan tasodifiy N ta elementni (takrorlanmas) tanlaydi
-function pickN(arr, n) {
-  const shuffled = [...arr].sort(() => Math.random() - 0.5);
-  return shuffled.slice(0, n);
+// "250 m²" bo'lsa, "m²" ni qayta qo'shmaydi
+function formatArea(maydon) {
+  if (!maydon) return '';
+  const s = String(maydon).trim();
+  if (/m²|m2|м²|м2|sotix|сот/i.test(s)) return s;
+  return `${s} m²`;
 }
 
-function buildFeatureLine(data) {
-  const parts = [];
-  if (data.xonalar) parts.push(`🛏 ${data.xonalar} xonali`);
-  if (data.maydon) parts.push(`📐 ${data.maydon} m²`);
-  if (data.qavat) parts.push(`🏢 ${data.qavat}-qavat`);
-  if (data.narx) parts.push(`💰 ${data.narx}`);
-  return parts.join('  ·  ');
+// Telefon raqamlarini olib tashlaydi, ortiqcha bo'shliqlarni tozalaydi
+function cleanText(text) {
+  return String(text || '')
+    .replace(/\+?\d[\d\s\-()]{7,}\d/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 }
 
 function generateCaption(data) {
-  const opener = pick(OPENERS);
-  const cta = pick(CTAS);
-  const featureLine = buildFeatureLine(data);
-  const manzilLine = data.manzil ? `📍 ${data.manzil}` : '';
-  const xususiyatLine = data.xususiyat ? `\n${data.xususiyat}` : '';
-  const caption = [
-    opener,
-    '',
-    `${data.uyTuri || 'Mulk'} sotiladi`,
-    manzilLine,
-    featureLine,
-    xususiyatLine,
-    '',
-    cta
-  ].filter(Boolean).join('\n');
-  return caption;
+  const { uyTuri, manzil, narx, qavat, xonalar, maydon, xususiyat } = data;
+  const lines = [];
+
+  lines.push('Bugungi eng qiziqarli taklifimiz 👇');
+  if (uyTuri) lines.push(`${toLatin(uyTuri)} sotiladi`);
+  if (manzil) lines.push(`📍 ${manzil}`);
+
+  const facts = [];
+  if (xonalar) facts.push(`🛏 ${xonalar} xonali`);
+  if (maydon) facts.push(`📐 ${formatArea(maydon)}`);
+  if (qavat) facts.push(`🏢 ${qavat}-qavat`);
+  if (narx) facts.push(`💰 ${formatPrice(narx)}`);
+  if (facts.length) lines.push(facts.join(' · '));
+
+  const extra = cleanText(xususiyat).slice(0, MAX_XUSUSIYAT_CHARS);
+  if (extra) lines.push('', extra);
+
+  lines.push('', "Bugunoq ko'rib kelishga yoziling — imkoniyat cheklangan!");
+  return lines.join('\n');
 }
 
-/**
- * Hashtaglarni 3 qatlamli strategiya bilan yasaydi:
- * - Keng qamrovli (broad): ko'p ko'rish, lekin yuqori raqobat
- * - O'rta (medium): mulk turiga mos, o'rtacha raqobat
- * - Tor (niche): hudud/xususiyatga xos, kam raqobat lekin aniq auditoriya
- * Bu aralashma Instagram algoritmida turli auditoriya segmentlariga chiqish imkonini beradi.
- */
+// Manzildan tuman nomini lotin harfida, qisqa hashtag qilib oladi
+// ("Юнусобод тумани Обод махалла" -> "yunusobod")
+function districtTag(manzil) {
+  if (!manzil) return null;
+  const first = toLatin(String(manzil)).trim().split(/[\s,]+/)[0] || '';
+  const clean = first.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return clean.length >= 4 && clean.length <= 20 ? `#${clean}` : null;
+}
+
 function generateHashtags(data) {
-  const uyTuriKey = (data.uyTuri || '').toLowerCase();
-  const mediumPool = HASHTAGS_MEDIUM[uyTuriKey] || HASHTAGS_MEDIUM.default;
+  const { uyTuri, manzil, xonalar } = data;
+  const tags = ['#kochmasmulk', '#realestate', '#uzbekistan', '#toshkent'];
 
-  const broad = pickN(HASHTAGS_BROAD, 3);        // 3 ta keng qamrovli
-  const medium = pickN(mediumPool, 2);             // 2 ta o'rta
-  const niche = buildNicheHashtags(data).slice(0, 4); // 4 tagacha tor
+  const type = toLatin(uyTuri || '').toLowerCase().replace(/[^a-z]/g, '');
+  if (type) tags.push(`#${type}sotiladi`);
 
-  const all = [...new Set([...broad, ...medium, ...niche])];
-  return all.slice(0, 12); // Instagram tavsiyasi: 10-15 ta orasida optimal
+  const district = districtTag(manzil);
+  if (district) tags.push(district);
+
+  const rooms = String(xonalar || '').match(/\d+/);
+  if (rooms) tags.push(`#${rooms[0]}xonali`);
+
+  return Array.from(new Set(tags));
 }
 
 module.exports = { generateCaption, generateHashtags };
